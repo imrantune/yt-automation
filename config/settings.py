@@ -54,6 +54,7 @@ class Settings:
     minimax_api_key: str
     minimax_api_base: str
     minimax_enabled: bool
+    minimax_unit_price: float
 
     runway_api_key: str
     runway_api_base: str
@@ -136,6 +137,7 @@ class Settings:
             minimax_api_key=os.getenv("MINIMAX_API_KEY", "").strip(),
             minimax_api_base=os.getenv("MINIMAX_API_BASE", "https://api.minimax.chat"),
             minimax_enabled=_to_bool(os.getenv("MINIMAX_ENABLED"), default=True),
+            minimax_unit_price=float(os.getenv("MINIMAX_UNIT_PRICE", "0.266")),
             runway_api_key=os.getenv("RUNWAY_API_KEY", "").strip(),
             runway_api_base=os.getenv("RUNWAY_API_BASE", "https://api.dev.runwayml.com"),
             runway_enabled=_to_bool(os.getenv("RUNWAY_ENABLED"), default=True),
@@ -190,3 +192,28 @@ def get_settings(require_api_keys: bool = True) -> Settings:
     settings.ensure_paths()
     _cached_settings = settings
     return settings
+
+
+def reload_settings(require_api_keys: bool = False) -> Settings:
+    """Clear cached settings and rebuild from .env (re-reads the file)."""
+    global _cached_settings  # noqa: PLW0603
+    _cached_settings = None
+    load_dotenv(ENV_PATH if ENV_PATH.exists() else None, override=True)
+    return get_settings(require_api_keys=require_api_keys)
+
+
+def update_env_value(key: str, value: str) -> None:
+    """Update a single key in the .env file, preserving all other lines."""
+    lines = ENV_PATH.read_text().splitlines(keepends=True)
+    found = False
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith(f"{key}=") or stripped.startswith(f"{key} ="):
+            lines[i] = f"{key}={value}\n"
+            found = True
+            break
+    if not found:
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] += "\n"
+        lines.append(f"{key}={value}\n")
+    ENV_PATH.write_text("".join(lines))

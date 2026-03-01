@@ -48,6 +48,15 @@ class ScriptGenerator:
             "- If should_add_new_character is true, introduce one new character.\n"
             "- If is_grand_tournament is true, set special event tone.\n"
             "- No duplicate or generic titles.\n"
+            "\n"
+            "YOUTUBE CONTENT SAFETY (MANDATORY):\n"
+            "- Focus on dramatic storytelling, honor, strategy, and character arcs.\n"
+            "- Describe combat as athletic and tactical, like a sports broadcast.\n"
+            "- NEVER include graphic gore, blood descriptions, dismemberment, or torture.\n"
+            "- Deaths should be implied or described with restraint (e.g. 'fell in battle').\n"
+            "- Avoid hate speech, slurs, or dehumanizing language.\n"
+            "- Keep language PG-13: no excessive profanity.\n"
+            "- Frame the arena as a test of skill and courage, not gratuitous violence.\n"
             "Return JSON shape:\n"
             "{\n"
             '  "title": "string",\n'
@@ -137,6 +146,7 @@ class ScriptGenerator:
                 raise ValueError("OpenAI returned empty choices list.")
             content = response.choices[0].message.content or "{}"
             payload = self._validate_payload(json.loads(content))
+            _script_usage = response.usage
 
             unique_title = self._ensure_unique_title(manager, payload.title, episode_number)
             if unique_title != payload.title:
@@ -171,6 +181,14 @@ class ScriptGenerator:
             session.flush()
 
             manager.apply_character_results(session, episode, payload.character_results)
+
+            if _script_usage:
+                from pipeline.cost_tracker import log_openai_chat
+                log_openai_chat(
+                    session, episode.id, job_id, "script_generation",
+                    settings.openai_model,
+                    _script_usage.prompt_tokens, _script_usage.completion_tokens,
+                )
 
             set_episode_status(session, episode, EpisodeStatus.VOICEOVER)
             log_job_step(

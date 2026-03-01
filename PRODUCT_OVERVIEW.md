@@ -2,180 +2,160 @@
 
 ## What This Product Does
 
-`yt-automation` is a fully automated content pipeline that creates Spartacus-style gladiator episodes and tracks narrative continuity in a database. The core system can run without manual editing once APIs and infrastructure are configured.
-
-Primary outcome per run:
-- Generate one episode script with continuity rules
-- Produce scene voiceovers
-- Generate scene video clips using provider fallback
-- Merge clips + narration into one final video
-- Update character stats (wins, losses, deaths) in DB
-- Persist all state transitions and logs in PostgreSQL
+`yt-automation` is a fully automated YouTube channel pipeline that creates Spartacus-style gladiator episodes with narrative continuity. It generates scripts, voiceovers, video clips, subtitles, thumbnails, YouTube Shorts, SEO metadata, and optionally uploads everything to YouTube -- all without manual intervention.
 
 ## Architecture
 
 ### Config Layer (`config/settings.py`)
-- Loads `.env` values with strict validation at startup
-- **Fails fast** if required keys are missing (`OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `DATABASE_URL`, `REDIS_URL`)
-- Validates provider order entries against known set (`wan21`, `minimax`, `runway`)
-- Controls Wan2.1 frame limits (`WAN21_MAX_FRAMES`, default 49) to prevent OOM
-- Creates output folders automatically
+- Loads `.env` with strict validation at startup
+- Fails fast if required keys missing (DB, Redis, OpenAI, ElevenLabs)
+- Validates video provider order against known set
+- `require_api_keys=False` mode for infra-only contexts (migrations, seeding, web dashboard)
 
 ### Persistence Layer (`database/`)
-- **Models** (`models.py`): SQLAlchemy ORM for Series, Episode, Scene, Character, CharacterStat, VideoJob, JobLog
-  - Uses `datetime.now(timezone.utc)` (non-deprecated) for all timestamps
-  - Episode and Character have `updated_at` columns with auto-update
-- **Connection** (`connection.py`): session management with `session_scope()` context manager
-  - DB helper functions (log_job_step, set_episode_status, etc.) never call rollback -- transaction control belongs to the caller
-  - `log_job_step_isolated()` uses a separate session so failure logs survive parent rollbacks
-- **Migration** (`migrations/`): Alembic with lowercase enum values matching ORM
-  - `server_default` on all `created_at` columns for raw SQL safety
-  - `ON DELETE CASCADE` / `SET NULL` on all foreign keys
-  - Downgrade drops all enum types to allow clean re-runs
+- **Models**: Series, Episode, Scene, Character (with `voice_id`), CharacterStat, VideoJob, JobLog, EpisodeSEO, Short, ApiCostLog
+- **Enums**: stored lowercase via `values_callable` to match PostgreSQL enum values
+- **Connection**: `session_scope()` context manager, isolated failure logging
+- **Migrations**: Alembic with 4 revisions (initial schema + Phase 2 + character voice_id + API cost logs)
 
 ### Generation Pipeline (`pipeline/`)
 
-**ConsistencyManager** (`consistency_manager.py`)
-- Fetches alive characters, recent episode summaries, and rule flags
-- Kill rule only fires when alive character count exceeds minimum threshold (3)
-- Raises early if no alive characters exist (prevents nonsensical scripts)
-- `apply_character_results()` persists GPT's character outcomes to DB:
-  - Creates CharacterStat rows per episode
-  - Updates Character.wins, Character.losses
-  - Sets Character.is_alive = False on death events
+| Module | Purpose |
+|--------|---------|
+| `consistency_manager.py` | Story continuity, character results, kill/new character rules |
+| `script_generator.py` | GPT-4o script generation with scene structure |
+| `seo.py` | GPT-powered YouTube title, description, tags, hashtags |
+| `voiceover.py` | ElevenLabs per-scene narration with per-character voice override |
+| `cost_tracker.py` | Real-time API cost tracking per episode (OpenAI, ElevenLabs, Minimax, Runway) |
+| `subtitles.py` | Whisper API transcription to SRT files |
+| `video_generator.py` | Wan2.1/Minimax/Runway video clips with fallback |
+| `music.py` | Background music mixing per scene type |
+| `thumbnail.py` | DALL-E 3 image + Pillow text overlay |
+| `shorts.py` | Vertical 9:16 Short from climax scene |
+| `youtube_upload.py` | YouTube Data API v3 upload + thumbnail set |
 
-**ScriptGenerator** (`script_generator.py`)
-- GPT-4o strict JSON generation with validated scene structure
-- Handles empty `response.choices` from OpenAI (content filter edge case)
-- Unique title enforcement with retry (up to 5 suffix attempts)
-- Character results are persisted after script generation (continuity works)
+### Web Dashboard (`web/`)
+- **FastAPI + Jinja2 + Tailwind CSS + Video.js** dark theme UI
+- Dashboard overview with episode/job/character stats, active pipeline tracker, Wan 2.1 download status
+- Episode detail: Video.js player for full episode + per-scene audio/video players + Shorts players
+- **Voice management**: per-scene voiceover regeneration with voice selector (20+ ElevenLabs voices), per-character voice assignment on Characters page
+- Job list + log viewer with status badges, step timeline, and durations
+- Character roster with win/loss stats, alive status, and assigned voice
+- Generate page with live pipeline progress bar and log polling
+- Settings page showing API key status and config
+- **API cost tracking**: per-episode cost breakdown on detail page, total cost on dashboard with modal breakdown by service
+- API endpoints: `POST /api/generate`, `GET /api/voices`, `POST /api/scenes/{id}/regenerate-voice`, `POST /api/characters/{id}/voice`, `GET /api/episodes/{id}/costs`, `GET /api/costs/summary`, `GET /api/pipelines/active`, `GET /api/wan21/status`
+- Auto-generated API docs at `/docs`
 
-**VoiceoverGenerator** (`voiceover.py`)
-- Per-scene ElevenLabs narration with content size validation (rejects < 1KB responses)
-- Skips scenes with empty narration text
-- Failure logs written via isolated session (always committed)
+## Full Pipeline Flow
 
-**VideoGenerator** (`video_generator.py`)
-- Provider abstraction with ordered fallback chain
-- Wan2.1: frame count capped to `WAN21_MAX_FRAMES` (default 49) to prevent OOM
-- Wan2.1: correctly accesses `result.frames[0]` (nested list from diffusers)
-- Minimax/Runway: `OSError` caught in write paths so disk failures trigger fallback
-- Polling loops have debug-level logging for visibility
-
-**FFmpeg Merge** (`merge_episode_assets`)
-- Re-encodes all clips to canonical format before concat (handles mixed provider codecs/resolutions)
-- Audio concat uses `-f concat` demuxer (not broken `concat:` protocol)
-- All subprocess calls capture stderr for diagnostics
-- Temp files (manifests, intermediates) cleaned up after merge
-- `ffprobe` duration parsing gracefully handles `N/A` output
+```
+1. Script (GPT-4o) -> Episode + Scenes + Character Results
+2. SEO (GPT-4o) -> Optimized title, description, tags, hashtags
+3. Voiceover (ElevenLabs) -> Per-scene MP3 narration
+4. Subtitles (Whisper) -> Per-scene SRT files
+5. Video Clips (Wan2.1 / Minimax / Runway) -> Per-scene MP4
+6. Music Mix (FFmpeg) -> Background music under narration per scene type
+7. FFmpeg Merge -> Normalize codecs, concat clips + audio, burn subtitles
+8. Thumbnail (DALL-E 3 + Pillow) -> 1280x720 PNG with text overlay
+9. Shorts (FFmpeg) -> 1080x1920 vertical clip from climax scene
+10. YouTube Upload (Data API v3) -> Video + Short + thumbnail + SEO metadata
+```
 
 ## Video Provider Strategy
 
-Default provider order:
-1. `Wan 2.1` local (primary, free, Apple Silicon MPS)
-2. `Minimax` API (secondary)
-3. `Runway` API (tertiary)
+Default order: Wan 2.1 (local) -> Minimax (cloud) -> Runway (cloud)
 
-Switching behavior:
-- Configure with `VIDEO_PROVIDER_ORDER` in `.env`
-- Only valid values: `wan21`, `minimax`, `runway` (validated at startup)
-- Example fast switch: `VIDEO_PROVIDER_ORDER=minimax,runway`
+Configure via `VIDEO_PROVIDER_ORDER` in `.env`. Only valid values: `wan21`, `minimax`, `runway`.
+
+## Background Music
+
+Place royalty-free MP3/WAV tracks in `assets/music/` subdirectories:
+- `tension/` -- intro and general scenes
+- `battle/` -- fight scenes
+- `epic/` -- climax scenes
+- `calm/` -- outro scenes
+
+Music is mixed at -18dB under narration. If no tracks found, narration plays without music.
 
 ## Database Status Flows
 
-**Episode**: `pending -> scripting -> voiceover -> video_gen -> editing -> ready`
-On failure: `failed`
+**Episode**: `pending -> scripting -> voiceover -> video_gen -> editing -> ready -> uploaded`
 
 **VideoJob**: `pending -> running -> ready`
-On failure: `failed`
 
 **Scene**: `pending -> voiceover_done -> video_done`
-On failure: `failed`
 
-### Job Logging
-- Every pipeline step writes to `job_logs` with step name, status, and message
-- Success logs use the main session (committed with the step)
-- **Failure logs use an isolated session** so they survive transaction rollbacks
-- This means failures are always visible in the database
+On failure at any step: status set to `failed`, logged via isolated session.
 
 ## Story Continuity Rules
 
-- Only alive characters are fed into script generation context
-- Last 3 episode summaries included in prompt context
-- Character results (wins/losses/deaths) are persisted to DB after each episode
-- Rule flags computed by episode number:
-  - Every 5 episodes: one death event (only if > 3 alive characters)
-  - Every 10 episodes: new character introduction
-  - Every 20 episodes: grand tournament theme
-- Duplicate title prevention with multi-attempt suffix generation
-
-## End-to-End Runtime Flow
-
-1. Create running `VideoJob` (committed immediately)
-2. Generate and persist script/scenes via GPT-4o
-3. Apply character results to DB (wins/losses/deaths)
-4. Generate scene voiceovers via ElevenLabs
-5. Generate scene clips via provider fallback chain
-6. Normalize all clips to canonical codec/resolution
-7. Merge media with FFmpeg (concat demuxer, proper re-encoding)
-8. Mark job and episode as `ready`
-
-### Failure behavior
-- Each step's failure is logged via isolated session (always persisted)
-- Main session is rolled back on any error
-- Job and episode are marked `failed` in a separate session
-- Pipeline exits cleanly without uncontrolled crash
-- Celery tasks have retry with exponential backoff (up to 3 retries)
+- Only alive characters fed into script context
+- Last 3 episode summaries included in prompt
+- Character results (wins/losses/deaths) persisted per episode
+- Kill rule: every 5 episodes (only if > 3 alive characters)
+- New character: every 10 episodes
+- Grand tournament: every 20 episodes
 
 ## Celery Scheduling
 
-- `generate_episode`: daily at 2AM UTC, auto-retry 3x with 60-600s backoff, 1h time limit
-- `generate_week_batch`: Sunday 1AM UTC, fault-tolerant (one failure doesn't stop remaining), 8h time limit
-- Tasks import `run_pipeline` lazily to avoid circular imports
+- `generate_episode`: daily at 2AM UTC, auto-retry 3x, 1h time limit
+- `generate_week_batch`: Sunday 1AM UTC, fault-tolerant, 8h time limit
 
 ## Infrastructure
 
-### Docker (`docker-compose.yml`)
-- PostgreSQL 16 + Redis 7 with health checks
-- Credentials parameterized via env vars (not hardcoded)
-- Redis has password authentication
-- Ports bound to `127.0.0.1` only (not exposed to network)
-
-### Dependencies (`requirements.txt`)
-- All packages have version ranges pinned (major+minor)
-- No unused packages (removed `flask`, `ffmpeg-python`)
-
-### Environment (`.env.example`)
-- Complete template with comments explaining required vs optional keys
-- Redis URL includes password parameter
-- `WAN21_MAX_FRAMES` documented
+- **Docker**: PostgreSQL 16 + Redis 7, ports bound to localhost only
+- **Web**: FastAPI on port 8000 with auto-reload
+- **Dependencies**: All pinned in `requirements.txt`
 
 ## How To Operate
 
-1. Copy env: `cp .env.example .env` and fill in API keys
-2. Start infra: `docker-compose up -d`
-3. Run migrations: `.venv311/bin/alembic upgrade head`
-4. Seed initial data: `.venv311/bin/python -m database.seed`
-5. Run one episode: `.venv311/bin/python main.py`
-6. CLI commands:
-   - `python cli.py status` -- recent episodes
-   - `python cli.py characters` -- character roster
-   - `python cli.py jobs` -- recent job statuses
-   - `python cli.py generate` -- trigger one episode
-   - `python cli.py schedule` -- show cron schedule
-   - `python cli.py open-final-dir` -- print output directory
+```bash
+# Setup
+cp .env.example .env          # Fill in API keys
+docker-compose up -d           # Start Postgres + Redis
+.venv311/bin/alembic upgrade head
+.venv311/bin/python -m database.seed
 
-## Current Boundaries (Phase 1)
+# Run
+.venv311/bin/python main.py                              # Generate one episode
+.venv311/bin/uvicorn web.app:app --host 0.0.0.0 --port 8000  # Start dashboard
+.venv311/bin/python cli.py generate                      # CLI generate
+.venv311/bin/python cli.py status                        # Check episodes
 
-Included:
-- Foundation, DB, script generation with continuity, voiceover, video generation with provider fallback, FFmpeg merge, scheduling, CLI
+# Dashboard
+http://localhost:8000          # Web UI
+http://localhost:8000/docs     # API docs
+```
 
-Planned for next phases:
-- Subtitle burn-in (Whisper)
-- Thumbnail generation (DALL-E 3 + Pillow)
-- YouTube upload (Data API v3)
-- YouTube Shorts generator
-- Flask dashboard
-- Analytics tracking
-- Telegram alerts
-- Multi-series support
+## Environment Variables
+
+**Required**: `DATABASE_URL`, `REDIS_URL`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`
+
+**Optional**: `MINIMAX_API_KEY`, `RUNWAY_API_KEY`, `YOUTUBE_CLIENT_SECRET_PATH`, `YOUTUBE_CREDENTIALS_PATH`
+
+## Project Structure
+
+```
+config/settings.py              -- Environment config + validation
+database/models.py              -- SQLAlchemy ORM models
+database/connection.py          -- Session management + helpers
+database/migrations/            -- Alembic migrations
+database/seed.py                -- Initial data seeder
+pipeline/consistency_manager.py -- Story continuity
+pipeline/script_generator.py    -- GPT script generation
+pipeline/seo.py                 -- YouTube SEO optimization
+pipeline/voiceover.py           -- ElevenLabs narration
+pipeline/subtitles.py           -- Whisper subtitles
+pipeline/video_generator.py     -- Video providers + FFmpeg merge
+pipeline/music.py               -- Background music mixer
+pipeline/thumbnail.py           -- DALL-E 3 thumbnails
+pipeline/shorts.py              -- YouTube Shorts extractor
+pipeline/youtube_upload.py      -- YouTube Data API uploader
+web/app.py                      -- FastAPI dashboard
+web/templates/                  -- Jinja2 HTML templates
+main.py                         -- Pipeline orchestrator
+cli.py                          -- Click CLI
+scheduler/tasks.py              -- Celery scheduled tasks
+assets/music/                   -- Royalty-free background tracks
+```

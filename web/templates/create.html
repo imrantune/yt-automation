@@ -1,0 +1,334 @@
+{% extends "base.html" %}
+{% block title %}Create Custom Video - Spartacus Arena{% endblock %}
+{% block nav_create %}bg-gray-800 text-white{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+    <div>
+        <h2 class="text-2xl font-bold">Create Custom Video</h2>
+        <p class="text-sm text-gray-400 mt-1">Build any video from scratch — custom script, voice, and video prompts</p>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div class="lg:col-span-2 space-y-4">
+
+        <!-- Title & Provider -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                    <label class="text-xs text-gray-500 uppercase block mb-1">Video Title</label>
+                    <input id="video-title" type="text" value="My Custom Video"
+                        class="w-full bg-gray-800 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-2 focus:border-arena-400 focus:outline-none">
+                </div>
+                <div>
+                    <label class="text-xs text-gray-500 uppercase block mb-1">Video Provider</label>
+                    <select id="video-provider" class="w-full bg-gray-800 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-2">
+                        <option value="minimax">Minimax T2V-01 (Cloud)</option>
+                        <option value="wan21">Wan 2.1 (Local)</option>
+                        <option value="runway">Runway ML (Cloud)</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- Scenes -->
+        <div id="scenes-container" class="space-y-4">
+            <!-- Scene cards rendered by JS -->
+        </div>
+
+        <button onclick="addScene()" class="w-full py-3 border-2 border-dashed border-gray-700 hover:border-arena-400 rounded-xl text-gray-400 hover:text-arena-300 text-sm font-medium transition flex items-center justify-center gap-2">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>
+            Add Scene
+        </button>
+
+        <!-- Generate Button -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+            <button id="btn-generate" onclick="generateCustomVideo()"
+                class="w-full py-3 bg-arena-600 hover:bg-arena-500 text-black font-bold text-sm rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                Generate Video
+            </button>
+            <div id="gen-status" class="text-sm mt-3 hidden"></div>
+        </div>
+    </div>
+
+    <!-- Right sidebar -->
+    <div class="space-y-4">
+        <!-- Voice Selector -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+            <h3 class="text-xs font-semibold text-gray-500 uppercase mb-3">Default Voice</h3>
+            <select id="default-voice" class="w-full bg-gray-800 border border-gray-700 text-gray-200 text-xs rounded-lg px-2 py-1.5">
+                <option value="">Loading...</option>
+            </select>
+            <p class="text-xs text-gray-600 mt-2">Applied to scenes without a specific voice override</p>
+        </div>
+
+        <!-- Tips -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+            <h3 class="text-xs font-semibold text-gray-500 uppercase mb-3">Tips</h3>
+            <div class="space-y-3 text-xs text-gray-400">
+                <div>
+                    <p class="text-gray-300 font-medium">Narration Text</p>
+                    <p>The spoken text. This becomes the voiceover audio for the scene.</p>
+                </div>
+                <div>
+                    <p class="text-gray-300 font-medium">Video Prompt</p>
+                    <p>Describes what the AI should generate visually. Be specific: style, camera angle, lighting, action.</p>
+                </div>
+                <div>
+                    <p class="text-gray-300 font-medium">Voice Override</p>
+                    <p>Each scene can use a different voice. Leave blank to use the default voice.</p>
+                </div>
+                <hr class="border-gray-800">
+                <div>
+                    <p class="text-gray-300 font-medium">Example Scene</p>
+                    <p class="italic text-gray-500 mt-1">Narration: "The sun sets behind the mountains as the warrior returns home."</p>
+                    <p class="italic text-gray-500 mt-1">Video: "Cinematic wide shot of a lone warrior walking toward mountains at sunset, golden hour lighting, epic fantasy style, 4K"</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Progress Panel (shown during generation) -->
+        <div id="progress-panel" class="hidden bg-gray-900 border border-gray-800 rounded-xl p-5">
+            <div class="flex items-center gap-2 mb-3">
+                <div id="progress-spinner" class="w-4 h-4 border-2 border-arena-300 border-t-transparent rounded-full animate-spin"></div>
+                <h3 class="text-xs font-semibold text-gray-500 uppercase">Progress</h3>
+            </div>
+            <div id="progress-logs" class="space-y-1 max-h-72 overflow-y-auto text-xs"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let sceneCount = 0;
+let voicesCache = [];
+
+function sceneTemplate(idx) {
+    return `<div class="bg-gray-900 border border-gray-800 rounded-xl p-5" id="scene-${idx}">
+        <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-2">
+                <span class="text-xs font-mono bg-gray-800 px-2 py-0.5 rounded text-arena-300">${idx}</span>
+                <span class="text-sm font-semibold text-gray-300">Scene ${idx}</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <button onclick="previewSceneVoice(${idx})" class="text-blue-400 hover:text-blue-300 text-xs flex items-center gap-1" title="Preview voiceover">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072M18.364 5.636a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"/></svg>
+                    Preview
+                </button>
+                <button onclick="removeScene(${idx})" class="text-red-400 hover:text-red-300" title="Remove scene">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                </button>
+            </div>
+        </div>
+        <div class="space-y-3">
+            <div>
+                <label class="text-xs text-gray-500 block mb-1">Narration Text <span class="text-gray-700">(spoken voiceover)</span></label>
+                <textarea id="narration-${idx}" rows="3" placeholder="Type what the narrator should say..."
+                    class="w-full bg-gray-800 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-2 resize-none focus:border-arena-400 focus:outline-none"></textarea>
+            </div>
+            <div>
+                <label class="text-xs text-gray-500 block mb-1">Video Prompt <span class="text-gray-700">(visual description for AI)</span></label>
+                <textarea id="vidprompt-${idx}" rows="3" placeholder="Describe the visual scene for AI video generation..."
+                    class="w-full bg-gray-800 border border-gray-700 text-gray-200 text-sm rounded-lg px-3 py-2 resize-none focus:border-arena-400 focus:outline-none"></textarea>
+            </div>
+            <div>
+                <label class="text-xs text-gray-500 block mb-1">Voice Override <span class="text-gray-700">(optional — blank uses default)</span></label>
+                <select id="voice-${idx}" class="scene-voice-select w-full bg-gray-800 border border-gray-700 text-gray-200 text-xs rounded-lg px-2 py-1.5">
+                    <option value="">Use default voice</option>
+                </select>
+            </div>
+            <div id="preview-audio-${idx}" class="hidden">
+                <audio id="audio-preview-${idx}" controls preload="none" class="w-full h-8" style="border-radius:6px;"></audio>
+            </div>
+        </div>
+    </div>`;
+}
+
+function addScene() {
+    sceneCount++;
+    document.getElementById('scenes-container').insertAdjacentHTML('beforeend', sceneTemplate(sceneCount));
+    populateVoiceSelect(`voice-${sceneCount}`);
+}
+
+function removeScene(idx) {
+    const el = document.getElementById(`scene-${idx}`);
+    if (el) el.remove();
+}
+
+function populateVoiceSelect(selId) {
+    const sel = document.getElementById(selId);
+    if (!sel) return;
+    sel.innerHTML = '<option value="">Use default voice</option>';
+    voicesCache.forEach(v => {
+        const desc = [v.gender, v.accent, v.style].filter(Boolean).join(', ');
+        sel.innerHTML += `<option value="${v.voice_id}">${v.name}${desc ? ' — ' + desc : ''}</option>`;
+    });
+}
+
+async function loadVoices() {
+    try {
+        const res = await fetch('/api/voices');
+        const data = await res.json();
+        voicesCache = data.voices || [];
+
+        const defSel = document.getElementById('default-voice');
+        defSel.innerHTML = '<option value="">System default</option>';
+        voicesCache.forEach(v => {
+            const desc = [v.gender, v.style].filter(Boolean).join(', ');
+            defSel.innerHTML += `<option value="${v.voice_id}">${v.name}${desc ? ' — ' + desc : ''}</option>`;
+        });
+
+        document.querySelectorAll('.scene-voice-select').forEach(sel => {
+            populateVoiceSelect(sel.id);
+        });
+    } catch(e) {
+        console.error('Failed to load voices:', e);
+    }
+}
+
+let previewAudioEl = null;
+async function previewSceneVoice(idx) {
+    const text = document.getElementById(`narration-${idx}`)?.value?.trim();
+    if (!text) { alert('Enter narration text first.'); return; }
+    const voiceId = document.getElementById(`voice-${idx}`)?.value || document.getElementById('default-voice')?.value || '';
+
+    const container = document.getElementById(`preview-audio-${idx}`);
+    container.classList.remove('hidden');
+
+    try {
+        const res = await fetch('/api/custom/preview-voice', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({text: text.substring(0, 500), voice_id: voiceId}),
+        });
+        const data = await res.json();
+        if (data.audio_url) {
+            const audio = document.getElementById(`audio-preview-${idx}`);
+            audio.src = data.audio_url + '?t=' + Date.now();
+            audio.load();
+            audio.play();
+        }
+    } catch(e) {
+        console.error('Preview failed:', e);
+    }
+}
+
+function gatherScenes() {
+    const scenes = [];
+    document.querySelectorAll('[id^="scene-"]').forEach(card => {
+        const idx = card.id.replace('scene-', '');
+        const narration = document.getElementById(`narration-${idx}`)?.value || '';
+        const vidPrompt = document.getElementById(`vidprompt-${idx}`)?.value || '';
+        const voiceId = document.getElementById(`voice-${idx}`)?.value || '';
+        if (narration.trim() || vidPrompt.trim()) {
+            scenes.push({narration: narration.trim(), video_prompt: vidPrompt.trim(), voice_id: voiceId});
+        }
+    });
+    return scenes;
+}
+
+let genPollTimer = null;
+
+async function generateCustomVideo() {
+    const title = document.getElementById('video-title').value.trim() || 'Custom Video';
+    const provider = document.getElementById('video-provider').value;
+    const scenes = gatherScenes();
+    const defaultVoice = document.getElementById('default-voice').value;
+
+    if (scenes.length === 0) { alert('Add at least one scene with narration and video prompt.'); return; }
+
+    scenes.forEach(sc => {
+        if (!sc.voice_id && defaultVoice) sc.voice_id = defaultVoice;
+    });
+
+    const btn = document.getElementById('btn-generate');
+    const status = document.getElementById('gen-status');
+    btn.disabled = true;
+    btn.innerHTML = '<div class="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin"></div> Generating...';
+    status.classList.remove('hidden');
+    status.className = 'text-sm mt-3 text-blue-400';
+    status.textContent = 'Starting generation...';
+
+    document.getElementById('progress-panel').classList.remove('hidden');
+    document.getElementById('progress-logs').innerHTML = '<p class="text-gray-500">Waiting for pipeline...</p>';
+
+    try {
+        const res = await fetch('/api/custom/generate', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({title, scenes, provider}),
+        });
+        const data = await res.json();
+        if (data.status === 'started') {
+            status.className = 'text-sm mt-3 text-green-400';
+            status.textContent = data.message;
+            setTimeout(pollCustomJob, 2000);
+        } else {
+            status.className = 'text-sm mt-3 text-red-400';
+            status.textContent = data.error || 'Failed to start.';
+            btn.disabled = false;
+            btn.innerHTML = 'Generate Video';
+        }
+    } catch(e) {
+        status.className = 'text-sm mt-3 text-red-400';
+        status.textContent = 'Error: ' + e.message;
+        btn.disabled = false;
+        btn.innerHTML = 'Generate Video';
+    }
+}
+
+async function pollCustomJob() {
+    try {
+        const res = await fetch('/api/jobs/latest');
+        const data = await res.json();
+        if (!data.job_id) { setTimeout(pollCustomJob, 2000); return; }
+
+        const jobId = data.job_id;
+        genPollTimer = setInterval(async () => {
+            try {
+                const lr = await fetch(`/api/jobs/${jobId}/logs`);
+                const ld = await lr.json();
+                const logsDiv = document.getElementById('progress-logs');
+
+                logsDiv.innerHTML = ld.logs.map(l => {
+                    const color = l.status === 'success' ? 'text-green-400' : l.status === 'failed' ? 'text-red-400' : 'text-blue-400';
+                    return `<div class="flex items-start gap-2 py-1">
+                        <span class="px-1.5 py-0.5 rounded text-[10px] font-medium status-${l.status} shrink-0">${l.status}</span>
+                        <div><span class="text-arena-300 font-mono">${l.step}</span> <span class="text-gray-400">${l.message}</span></div>
+                    </div>`;
+                }).join('');
+                logsDiv.scrollTop = logsDiv.scrollHeight;
+
+                if (ld.job_status === 'ready' || ld.job_status === 'failed') {
+                    clearInterval(genPollTimer);
+                    const spinner = document.getElementById('progress-spinner');
+                    spinner.classList.remove('animate-spin');
+                    const btn = document.getElementById('btn-generate');
+                    btn.disabled = false;
+
+                    if (ld.job_status === 'ready') {
+                        btn.innerHTML = 'Generate Another';
+                        document.getElementById('gen-status').innerHTML = `<span class="text-green-400">Done!</span> <a href="/jobs/${jobId}" class="text-arena-300 hover:underline ml-2">View Job #${jobId}</a>`;
+                    } else {
+                        btn.innerHTML = 'Retry Generation';
+                        document.getElementById('gen-status').innerHTML = `<span class="text-red-400">Failed.</span> <a href="/jobs/${jobId}" class="text-arena-300 hover:underline ml-2">View Logs</a>`;
+                    }
+                }
+            } catch(e) {}
+        }, 3000);
+    } catch(e) {
+        setTimeout(pollCustomJob, 2000);
+    }
+}
+
+(async function init() {
+    addScene();
+    addScene();
+    addScene();
+    await loadVoices();
+})();
+</script>
+{% endblock %}

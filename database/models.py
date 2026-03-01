@@ -5,8 +5,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from enum import Enum
 
-from sqlalchemy import Boolean, DateTime, Enum as SAEnum, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Enum as SAEnum, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+
+def _enum_values(enum_cls):
+    """Return enum values (lowercase) for SAEnum storage."""
+    return [e.value for e in enum_cls]
 
 
 def utcnow() -> datetime:
@@ -95,7 +100,7 @@ class Episode(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     status: Mapped[EpisodeStatus] = mapped_column(
-        SAEnum(EpisodeStatus), nullable=False, default=EpisodeStatus.PENDING, index=True
+        SAEnum(EpisodeStatus, values_callable=_enum_values), nullable=False, default=EpisodeStatus.PENDING, index=True
     )
     youtube_video_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     youtube_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
@@ -110,6 +115,8 @@ class Episode(Base):
         "CharacterStat", back_populates="episode", cascade="all, delete-orphan"
     )
     video_jobs: Mapped[list["VideoJob"]] = relationship("VideoJob", back_populates="episode", cascade="all, delete-orphan")
+    seo: Mapped["EpisodeSEO | None"] = relationship("EpisodeSEO", back_populates="episode", uselist=False, cascade="all, delete-orphan")
+    shorts: Mapped[list["Short"]] = relationship("Short", back_populates="episode", cascade="all, delete-orphan")
 
 
 class Scene(Base):
@@ -121,12 +128,13 @@ class Scene(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     episode_id: Mapped[int] = mapped_column(ForeignKey("episodes.id"), nullable=False, index=True)
     scene_order: Mapped[int] = mapped_column(Integer, nullable=False)
-    scene_type: Mapped[SceneType] = mapped_column(SAEnum(SceneType), nullable=False, default=SceneType.OTHER)
+    scene_type: Mapped[SceneType] = mapped_column(SAEnum(SceneType, values_callable=_enum_values), nullable=False, default=SceneType.OTHER)
     narration_text: Mapped[str] = mapped_column(Text, nullable=False)
     audio_file_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    subtitle_file_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     video_clip_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     status: Mapped[SceneStatus] = mapped_column(
-        SAEnum(SceneStatus), nullable=False, default=SceneStatus.PENDING, index=True
+        SAEnum(SceneStatus, values_callable=_enum_values), nullable=False, default=SceneStatus.PENDING, index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
 
@@ -146,6 +154,7 @@ class Character(Base):
     wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     losses: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     is_alive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    voice_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     image_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow, onupdate=utcnow)
@@ -178,7 +187,7 @@ class VideoJob(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     episode_id: Mapped[int | None] = mapped_column(ForeignKey("episodes.id"), nullable=True, index=True)
-    status: Mapped[JobStatus] = mapped_column(SAEnum(JobStatus), nullable=False, default=JobStatus.PENDING, index=True)
+    status: Mapped[JobStatus] = mapped_column(SAEnum(JobStatus, values_callable=_enum_values), nullable=False, default=JobStatus.PENDING, index=True)
     final_video_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     thumbnail_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -198,8 +207,60 @@ class JobLog(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("video_jobs.id"), nullable=False, index=True)
     step: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    status: Mapped[StepStatus] = mapped_column(SAEnum(StepStatus), nullable=False)
+    status: Mapped[StepStatus] = mapped_column(SAEnum(StepStatus, values_callable=_enum_values), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
     logged_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow, index=True)
 
     job: Mapped["VideoJob"] = relationship("VideoJob", back_populates="logs")
+
+
+class EpisodeSEO(Base):
+    """SEO metadata generated for YouTube optimization."""
+
+    __tablename__ = "episode_seo"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    episode_id: Mapped[int] = mapped_column(ForeignKey("episodes.id"), nullable=False, unique=True, index=True)
+    title_seo: Mapped[str] = mapped_column(String(255), nullable=False)
+    description_seo: Mapped[str] = mapped_column(Text, nullable=False)
+    tags: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    hashtags: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+
+    episode: Mapped["Episode"] = relationship("Episode", back_populates="seo")
+
+
+class ApiCostLog(Base):
+    """Tracks real API usage and costs per episode per service."""
+
+    __tablename__ = "api_cost_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    episode_id: Mapped[int] = mapped_column(ForeignKey("episodes.id", ondelete="CASCADE"), nullable=False, index=True)
+    job_id: Mapped[int | None] = mapped_column(ForeignKey("video_jobs.id", ondelete="SET NULL"), nullable=True, index=True)
+    service: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    operation: Mapped[str] = mapped_column(String(128), nullable=False)
+    input_units: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_units: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    unit_type: Mapped[str] = mapped_column(String(32), nullable=False, default="tokens")
+    cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+
+    episode: Mapped["Episode"] = relationship("Episode", backref="cost_logs")
+
+
+class Short(Base):
+    """YouTube Shorts extracted from episodes."""
+
+    __tablename__ = "shorts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    episode_id: Mapped[int] = mapped_column(ForeignKey("episodes.id"), nullable=False, index=True)
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    youtube_video_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    youtube_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    uploaded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=utcnow)
+
+    episode: Mapped["Episode"] = relationship("Episode", back_populates="shorts")

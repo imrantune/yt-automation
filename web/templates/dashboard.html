@@ -1,0 +1,454 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Spartacus Arena{% endblock %}
+{% block nav_dashboard %}bg-gray-800 text-white{% endblock %}
+
+{% block content %}
+<h2 class="text-2xl font-bold mb-6">Dashboard</h2>
+
+<!-- Active Pipelines (auto-refreshing) -->
+<div id="pipelines-panel" class="mb-8">
+    <div class="flex items-center gap-2 mb-3">
+        <h3 class="text-lg font-semibold">Active Pipelines</h3>
+        <div id="pipelines-spinner" class="w-4 h-4 border-2 border-arena-300 border-t-transparent rounded-full animate-spin hidden"></div>
+    </div>
+    <div id="pipelines-container">
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 text-gray-500 text-sm">Loading...</div>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <p class="text-sm text-gray-400">Total Episodes</p>
+        <p class="text-3xl font-bold text-white mt-1">{{ total_episodes }}</p>
+        <p class="text-xs text-green-400 mt-2">{{ ready_episodes }} ready &middot; {{ failed_episodes }} failed</p>
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <p class="text-sm text-gray-400">Characters</p>
+        <p class="text-3xl font-bold text-white mt-1">{{ total_characters }}</p>
+        <p class="text-xs text-arena-300 mt-2">{{ alive_characters }} alive</p>
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <p class="text-sm text-gray-400">Total Jobs</p>
+        <p class="text-3xl font-bold text-white mt-1">{{ total_jobs }}</p>
+        <p class="text-xs text-blue-400 mt-2">{{ running_jobs }} running</p>
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <p class="text-sm text-gray-400">Total API Cost</p>
+        <p class="text-3xl font-bold text-white mt-1">${{ '%.4f'|format(total_cost_usd) }}</p>
+        <p class="text-xs text-gray-500 mt-2"><a href="#" onclick="showCostBreakdown()" class="text-arena-300 hover:underline">View breakdown</a></p>
+    </div>
+</div>
+
+<!-- Cost Breakdown Modal -->
+<div id="cost-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+    <div class="bg-gray-900 border border-gray-700 rounded-2xl p-6 max-w-lg w-full max-h-[80vh] overflow-y-auto">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-bold">API Cost Breakdown</h3>
+            <button onclick="document.getElementById('cost-modal').classList.add('hidden')" class="text-gray-400 hover:text-white text-xl">&times;</button>
+        </div>
+        <div id="cost-modal-body" class="text-sm text-gray-400">Loading...</div>
+    </div>
+</div>
+
+<!-- Wan 2.1 Model Status -->
+<div id="wan21-panel" class="mb-8 hidden">
+    <div class="flex items-center gap-2 mb-3">
+        <h3 class="text-lg font-semibold">Wan 2.1 Video Model</h3>
+        <div id="wan21-spinner" class="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin hidden"></div>
+    </div>
+    <div id="wan21-container"></div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <div>
+        <h3 class="text-lg font-semibold mb-3">Recent Episodes</h3>
+        <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+            {% if recent_episodes %}
+            <table class="w-full text-sm">
+                <thead class="bg-gray-800/50 text-gray-400 text-xs uppercase">
+                    <tr>
+                        <th class="px-4 py-3 text-left">#</th>
+                        <th class="px-4 py-3 text-left">Title</th>
+                        <th class="px-4 py-3 text-left">Status</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-800">
+                    {% for ep in recent_episodes %}
+                    <tr class="hover:bg-gray-800/30">
+                        <td class="px-4 py-3"><a href="/episodes/{{ ep.id }}" class="text-arena-300 hover:underline">{{ ep.episode_number }}</a></td>
+                        <td class="px-4 py-3">{{ ep.title[:40] }}</td>
+                        <td class="px-4 py-3"><span class="px-2 py-1 rounded-full text-xs font-medium status-{{ ep.status.value }}">{{ ep.status.value }}</span></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="p-4 text-gray-500">No episodes yet. Generate your first one!</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div>
+        <h3 class="text-lg font-semibold mb-3">Recent Jobs</h3>
+        <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+            {% if recent_jobs %}
+            <table class="w-full text-sm">
+                <thead class="bg-gray-800/50 text-gray-400 text-xs uppercase">
+                    <tr>
+                        <th class="px-4 py-3 text-left">ID</th>
+                        <th class="px-4 py-3 text-left">Episode</th>
+                        <th class="px-4 py-3 text-left">Status</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-800">
+                    {% for job in recent_jobs %}
+                    <tr class="hover:bg-gray-800/30">
+                        <td class="px-4 py-3"><a href="/jobs/{{ job.id }}" class="text-arena-300 hover:underline">{{ job.id }}</a></td>
+                        <td class="px-4 py-3">{{ job.episode_id or '-' }}</td>
+                        <td class="px-4 py-3"><span class="px-2 py-1 rounded-full text-xs font-medium status-{{ job.status.value }}">{{ job.status.value }}</span></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <p class="p-4 text-gray-500">No jobs yet.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function fmtDuration(sec) {
+    if (sec == null) return '';
+    if (sec < 60) return sec.toFixed(1) + 's';
+    const m = Math.floor(sec / 60);
+    const s = (sec % 60).toFixed(0);
+    if (m < 60) return m + 'm ' + s + 's';
+    const h = Math.floor(m / 60);
+    return h + 'h ' + (m % 60) + 'm';
+}
+
+function stepIcon(status) {
+    if (status === 'success') return '<svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>';
+    if (status === 'running') return '<div class="w-4 h-4 border-2 border-arena-300 border-t-transparent rounded-full animate-spin"></div>';
+    if (status === 'failed') return '<svg class="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>';
+    return '<div class="w-4 h-4 rounded-full border-2 border-gray-700"></div>';
+}
+
+function renderPipeline(p) {
+    const statusBadge = p.status === 'running' || p.status === 'pending'
+        ? `<span class="status-running px-2 py-0.5 rounded text-xs font-medium">Running</span>`
+        : p.status === 'ready'
+        ? `<span class="status-success px-2 py-0.5 rounded text-xs font-medium">Complete</span>`
+        : `<span class="status-failed px-2 py-0.5 rounded text-xs font-medium">Failed</span>`;
+
+    const elapsed = fmtDuration(p.elapsed_seconds);
+    const currentLabel = p.current_step ? `<span class="text-arena-300 text-sm font-medium">${p.current_step}</span>` : '';
+
+    const steps = p.timeline.map(s => {
+        const dur = s.duration_seconds != null ? `<span class="text-xs text-gray-500">${fmtDuration(s.duration_seconds)}</span>` : '';
+        const labelColor = s.status === 'running' ? 'text-arena-300 font-medium'
+            : s.status === 'success' ? 'text-green-400'
+            : s.status === 'failed' ? 'text-red-400'
+            : 'text-gray-600';
+        return `<div class="flex flex-col items-center gap-1 min-w-[70px]">
+            ${stepIcon(s.status)}
+            <span class="text-xs ${labelColor}">${s.label}</span>
+            ${dur}
+        </div>`;
+    }).join('<div class="h-px w-4 bg-gray-700 mt-2 shrink-0"></div>');
+
+    const retryBtns = ((p.status === 'failed' || p.status === 'ready') && p.episode_id) ? `
+        <div class="flex items-center gap-2 mt-3 pt-3 border-t border-gray-800 flex-wrap">
+            <span class="text-xs text-gray-500">Retry:</span>
+            <button onclick="retryEpisode(${p.episode_id}, 'retry-video', this)" class="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition disabled:opacity-50">Video</button>
+            <button onclick="retryEpisode(${p.episode_id}, 'retry-merge', this)" class="px-2.5 py-1 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold rounded-lg transition disabled:opacity-50">Merge</button>
+            <button onclick="retryEpisode(${p.episode_id}, 'retry-thumbnail', this)" class="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold rounded-lg transition disabled:opacity-50">Thumb</button>
+            <button onclick="retryEpisode(${p.episode_id}, 'retry-shorts', this)" class="px-2.5 py-1 bg-pink-600 hover:bg-pink-500 text-white text-xs font-semibold rounded-lg transition disabled:opacity-50">Shorts</button>
+            <button onclick="retryEpisode(${p.episode_id}, 'retry-upload', this)" class="px-2.5 py-1 bg-red-600 hover:bg-red-500 text-white text-xs font-semibold rounded-lg transition disabled:opacity-50">Upload</button>
+            <div class="w-px h-4 bg-gray-700"></div>
+            <button onclick="retryEpisode(${p.episode_id}, 'retry-full', this)" class="px-2.5 py-1 bg-arena-600 hover:bg-arena-500 text-black text-xs font-semibold rounded-lg transition disabled:opacity-50">Full</button>
+            <span id="retry-status-${p.episode_id}" class="text-xs hidden"></span>
+        </div>
+    ` : '';
+
+    return `<div class="bg-gray-900 border border-gray-800 rounded-xl p-5 mb-3">
+        <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center gap-3">
+                <a href="/jobs/${p.job_id}" class="text-arena-300 hover:underline font-mono text-sm">Job #${p.job_id}</a>
+                ${statusBadge}
+                ${p.episode_title ? `<span class="text-gray-400 text-sm truncate max-w-xs">${p.episode_title}</span>` : ''}
+            </div>
+            <div class="flex items-center gap-3 text-sm text-gray-400">
+                ${currentLabel}
+                <span class="font-mono">${elapsed}</span>
+            </div>
+        </div>
+        <div class="flex items-start justify-between gap-1 overflow-x-auto pb-2">
+            ${steps}
+        </div>
+        ${retryBtns}
+    </div>`;
+}
+
+async function refreshPipelines() {
+    try {
+        const res = await fetch('/api/pipelines/active');
+        const data = await res.json();
+        const container = document.getElementById('pipelines-container');
+        const spinner = document.getElementById('pipelines-spinner');
+
+        if (data.pipelines.length === 0) {
+            container.innerHTML = '<div class="bg-gray-900 border border-gray-800 rounded-xl p-5 text-gray-500 text-sm">No active pipelines. <a href="/generate" class="text-arena-300 hover:underline">Generate one</a></div>';
+            spinner.classList.add('hidden');
+            return;
+        }
+
+        const hasRunning = data.pipelines.some(p => p.status === 'running' || p.status === 'pending');
+        if (hasRunning) {
+            spinner.classList.remove('hidden');
+        } else {
+            spinner.classList.add('hidden');
+        }
+
+        container.innerHTML = data.pipelines.map(renderPipeline).join('');
+    } catch (e) {
+        console.error('Failed to refresh pipelines:', e);
+    }
+}
+
+function fmtBytes(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+    if (bytes < 1073741824) return (bytes / 1048576).toFixed(1) + ' MB';
+    return (bytes / 1073741824).toFixed(2) + ' GB';
+}
+
+function renderWan21(d) {
+    const panel = document.getElementById('wan21-panel');
+    const container = document.getElementById('wan21-container');
+    const spinner = document.getElementById('wan21-spinner');
+
+    if (!d.enabled) {
+        panel.classList.add('hidden');
+        return;
+    }
+    panel.classList.remove('hidden');
+
+    if (d.installed) {
+        if (d.verify_active) {
+            spinner.classList.remove('hidden');
+        } else {
+            spinner.classList.add('hidden');
+        }
+
+        let verifySection = '';
+        if (d.verified === true) {
+            verifySection = `<div class="flex items-center gap-2 mt-3 pt-3 border-t border-gray-800">
+                <svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                <span class="text-green-400 text-sm font-medium">Model Verified — loads and generates frames</span>
+            </div>`;
+        } else if (d.verified === false) {
+            verifySection = `<div class="mt-3 pt-3 border-t border-gray-800">
+                <div class="flex items-center gap-2">
+                    <svg class="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    <span class="text-red-400 text-sm font-medium">Verification Failed</span>
+                </div>
+                <p class="text-xs text-red-300 mt-1 break-all">${d.verify_error || 'Unknown error'}</p>
+                <button onclick="verifyWan21()" class="mt-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition">Retry Verify</button>
+            </div>`;
+        } else if (d.verify_active) {
+            verifySection = `<div class="flex items-center gap-2 mt-3 pt-3 border-t border-gray-800">
+                <div class="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+                <span class="text-blue-400 text-sm">Verifying model — loading pipeline...</span>
+            </div>`;
+        } else {
+            verifySection = `<div class="flex items-center gap-2 mt-3 pt-3 border-t border-gray-800">
+                <span class="text-yellow-400 text-xs">Not verified yet</span>
+                <button onclick="verifyWan21()" class="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition">Verify Model</button>
+            </div>`;
+        }
+
+        container.innerHTML = `<div class="bg-gray-900 border border-green-900/50 rounded-xl p-5">
+            <div class="flex items-center gap-3">
+                <svg class="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                <div>
+                    <p class="text-green-400 font-semibold">Model Downloaded</p>
+                    <p class="text-xs text-gray-500 mt-0.5">${d.model_id} &middot; ${d.downloaded_gb} GB &middot; ${d.complete_files} files</p>
+                </div>
+            </div>
+            ${verifySection}
+        </div>`;
+        return;
+    }
+
+    const isActive = d.downloading || d.download_active;
+    if (isActive) {
+        spinner.classList.remove('hidden');
+    } else {
+        spinner.classList.add('hidden');
+    }
+
+    const pct = d.progress_pct;
+    const barColor = isActive ? 'bg-blue-500' : 'bg-gray-600';
+    const statusText = isActive ? 'Downloading...' : (d.total_files === 0 ? 'Not downloaded' : 'Paused');
+    const statusColor = isActive ? 'text-blue-400' : 'text-yellow-400';
+
+    const fileRows = d.files.map(f => {
+        const icon = f.status === 'complete'
+            ? '<svg class="w-3.5 h-3.5 text-green-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>'
+            : '<div class="w-3.5 h-3.5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin shrink-0"></div>';
+        return `<div class="flex items-center justify-between text-xs py-1">
+            <div class="flex items-center gap-2">${icon}<span class="text-gray-400 font-mono">${f.name}</span></div>
+            <span class="text-gray-500">${fmtBytes(f.bytes)}</span>
+        </div>`;
+    }).join('');
+
+    const downloadBtn = (!isActive && !d.installed) ? `
+        <button id="wan21-dl-btn" onclick="startWan21Download()" class="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition disabled:opacity-50 ml-2">
+            ${d.total_files === 0 ? 'Start Download' : 'Resume Download'}
+        </button>` : '';
+
+    container.innerHTML = `<div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center">
+                <span class="${statusColor} font-semibold text-sm">${statusText}</span>
+                <span class="text-gray-500 text-xs ml-2">${d.model_id}</span>
+                ${downloadBtn}
+            </div>
+            <div class="text-right">
+                <span class="text-white font-mono text-sm">${d.downloaded_gb} GB</span>
+                <span class="text-gray-500 text-sm"> / ~${d.expected_total_gb} GB</span>
+            </div>
+        </div>
+        <!-- Progress bar -->
+        <div class="w-full bg-gray-800 rounded-full h-3 mb-3 overflow-hidden">
+            <div class="${barColor} h-3 rounded-full transition-all duration-500" style="width: ${pct}%"></div>
+        </div>
+        <div class="flex items-center justify-between text-xs mb-3">
+            <span class="text-gray-400">${pct}% complete</span>
+            <span class="text-gray-500">${d.complete_files} complete &middot; ${d.incomplete_files} downloading</span>
+        </div>
+        ${d.files.length > 0 ? `<div class="border-t border-gray-800 pt-3 mt-1">
+            <p class="text-xs text-gray-500 uppercase font-semibold mb-2">Large Files</p>
+            ${fileRows}
+        </div>` : ''}
+    </div>`;
+}
+
+let wan21Timer = null;
+async function refreshWan21() {
+    try {
+        const res = await fetch('/api/wan21/status');
+        const data = await res.json();
+        renderWan21(data);
+
+        if (data.installed || (!data.downloading && data.total_files === 0)) {
+            if (wan21Timer) { clearInterval(wan21Timer); wan21Timer = null; }
+        } else if (!wan21Timer) {
+            wan21Timer = setInterval(refreshWan21, 5000);
+        }
+    } catch (e) {
+        console.error('Failed to refresh Wan 2.1 status:', e);
+    }
+}
+
+refreshPipelines();
+setInterval(refreshPipelines, 3000);
+refreshWan21();
+wan21Timer = setInterval(refreshWan21, 5000);
+
+async function startWan21Download() {
+    const btn = document.getElementById('wan21-dl-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Starting...'; }
+    try {
+        const res = await fetch('/api/wan21/download', {method: 'POST'});
+        const data = await res.json();
+        if (btn) { btn.textContent = data.message; }
+        setTimeout(refreshWan21, 2000);
+    } catch(e) {
+        if (btn) { btn.textContent = 'Error: ' + e.message; btn.disabled = false; }
+    }
+}
+
+async function verifyWan21() {
+    try {
+        const res = await fetch('/api/wan21/verify', {method: 'POST'});
+        const data = await res.json();
+        setTimeout(refreshWan21, 2000);
+    } catch(e) {
+        console.error('Failed to start Wan 2.1 verification:', e);
+    }
+}
+
+(async function autoStartWan21() {
+    try {
+        const res = await fetch('/api/wan21/status');
+        const d = await res.json();
+        if (!d.installed && !d.download_active && !d.downloading && d.enabled) {
+            await startWan21Download();
+        } else if (d.installed && d.verified === null && !d.verify_active && d.enabled) {
+            await verifyWan21();
+        }
+    } catch(e) {}
+})();
+
+async function retryEpisode(episodeId, action, btn) {
+    btn.disabled = true;
+    btn.classList.add('opacity-50');
+    const status = document.getElementById(`retry-status-${episodeId}`);
+    if (status) {
+        status.classList.remove('hidden');
+        status.className = 'text-xs text-blue-400';
+        status.textContent = 'Starting...';
+    }
+    try {
+        const res = await fetch(`/api/episodes/${episodeId}/${action}`, {method: 'POST'});
+        const data = await res.json();
+        if (data.status === 'started') {
+            if (status) { status.className = 'text-xs text-green-400'; status.textContent = 'Started! Monitoring...'; }
+            setTimeout(() => { btn.disabled = false; btn.classList.remove('opacity-50'); }, 5000);
+        } else {
+            if (status) { status.className = 'text-xs text-red-400'; status.textContent = data.error || 'Failed'; }
+            btn.disabled = false; btn.classList.remove('opacity-50');
+        }
+    } catch(e) {
+        if (status) { status.className = 'text-xs text-red-400'; status.textContent = e.message; }
+        btn.disabled = false; btn.classList.remove('opacity-50');
+    }
+}
+
+async function showCostBreakdown() {
+    const modal = document.getElementById('cost-modal');
+    const body = document.getElementById('cost-modal-body');
+    modal.classList.remove('hidden');
+    body.innerHTML = 'Loading...';
+    try {
+        const res = await fetch('/api/costs/summary');
+        const d = await res.json();
+        let html = `<div class="mb-4"><p class="text-2xl font-bold text-arena-300">$${d.grand_total_usd.toFixed(4)}</p><p class="text-xs text-gray-500 mt-1">Total across all episodes</p></div>`;
+        html += '<h4 class="text-xs font-semibold text-gray-500 uppercase mb-2">By Service</h4>';
+        html += '<div class="space-y-2 mb-4">';
+        d.by_service.forEach(s => {
+            const pct = d.grand_total_usd > 0 ? ((s.total_usd / d.grand_total_usd) * 100).toFixed(1) : 0;
+            html += `<div class="flex items-center justify-between"><div><span class="text-gray-200 capitalize">${s.service}</span><span class="text-gray-600 text-xs ml-2">(${s.api_calls} calls)</span></div><div class="text-right"><span class="font-mono text-gray-300">$${s.total_usd.toFixed(4)}</span><span class="text-gray-600 text-xs ml-2">${pct}%</span></div></div>`;
+            html += `<div class="w-full bg-gray-800 rounded-full h-1.5"><div class="bg-arena-400 h-1.5 rounded-full" style="width:${pct}%"></div></div>`;
+        });
+        html += '</div>';
+        if (d.recent_episodes.length > 0) {
+            html += '<h4 class="text-xs font-semibold text-gray-500 uppercase mb-2 mt-4">Per Episode</h4>';
+            html += '<div class="space-y-1">';
+            d.recent_episodes.forEach(e => {
+                html += `<div class="flex items-center justify-between text-xs"><a href="/episodes/${e.episode_id}" class="text-arena-300 hover:underline">Episode #${e.episode_id}</a><span class="font-mono text-gray-400">$${e.total_usd.toFixed(4)}</span></div>`;
+            });
+            html += '</div>';
+        }
+        body.innerHTML = html;
+    } catch(e) {
+        body.innerHTML = '<p class="text-red-400">Failed to load cost data.</p>';
+    }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Jobs - Spartacus Arena{% endblock %}
+{% block nav_jobs %}bg-gray-800 text-white{% endblock %}
+
+{% block content %}
+<h2 class="text-2xl font-bold mb-6">Jobs</h2>
+
+<div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+    {% if jobs %}
+    <table class="w-full text-sm">
+        <thead class="bg-gray-800/50 text-gray-400 text-xs uppercase">
+            <tr>
+                <th class="px-4 py-3 text-left">ID</th>
+                <th class="px-4 py-3 text-left">Episode</th>
+                <th class="px-4 py-3 text-left">Status</th>
+                <th class="px-4 py-3 text-left">Duration</th>
+                <th class="px-4 py-3 text-left">Started</th>
+                <th class="px-4 py-3 text-left">Completed</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-800">
+            {% for job in jobs %}
+            <tr class="hover:bg-gray-800/30">
+                <td class="px-4 py-3"><a href="/jobs/{{ job.id }}" class="text-arena-300 hover:underline font-mono">{{ job.id }}</a></td>
+                <td class="px-4 py-3">
+                    {% if job.episode_id %}
+                    <a href="/episodes/{{ job.episode_id }}" class="text-blue-400 hover:underline">{{ job.episode_id }}</a>
+                    {% else %}-{% endif %}
+                </td>
+                <td class="px-4 py-3"><span class="px-2 py-1 rounded-full text-xs font-medium status-{{ job.status.value }}">{{ job.status.value }}</span></td>
+                <td class="px-4 py-3 text-gray-400">{% if job.duration_seconds is not none %}{{ '%.1f'|format(job.duration_seconds) }}s{% else %}-{% endif %}</td>
+                <td class="px-4 py-3 text-gray-400 text-xs">{{ job.started_at.strftime('%H:%M:%S') if job.started_at else '-' }}</td>
+                <td class="px-4 py-3 text-gray-400 text-xs">{{ job.completed_at.strftime('%H:%M:%S') if job.completed_at else '-' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="p-8 text-gray-500 text-center">No jobs yet.</p>
+    {% endif %}
+</div>
+{% endblock %}

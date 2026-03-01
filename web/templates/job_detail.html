@@ -1,0 +1,216 @@
+{% extends "base.html" %}
+{% block title %}Job #{{ job.id }} - Spartacus Arena{% endblock %}
+{% block nav_jobs %}bg-gray-800 text-white{% endblock %}
+
+{% block content %}
+<div class="flex items-center gap-3 mb-6">
+    <a href="/jobs" class="text-gray-400 hover:text-white text-sm">&larr; Jobs</a>
+    <span class="text-gray-600">/</span>
+    <h2 class="text-2xl font-bold">Job #{{ job.id }}</h2>
+    <span id="job-status-badge" class="px-2 py-1 rounded-full text-xs font-medium status-{{ job.status.value }}">{{ job.status.value }}</span>
+    <span id="job-elapsed" class="text-sm text-gray-400 font-mono ml-auto"></span>
+</div>
+
+<!-- Video Preview (if job is complete) -->
+{% if final_video_url %}
+<div class="bg-gray-900 border border-gray-800 rounded-xl p-5 mb-6">
+    <h3 class="text-sm font-semibold text-gray-400 uppercase mb-3">Output Video</h3>
+    <video
+        id="job-player"
+        class="video-js vjs-theme-arena vjs-big-play-centered"
+        controls
+        preload="metadata"
+        {% if thumbnail_url %}poster="{{ thumbnail_url }}"{% endif %}
+        data-setup='{"fluid": true, "playbackRates": [0.5, 1, 1.25, 1.5, 2]}'
+    >
+        <source src="{{ final_video_url }}" type="video/mp4">
+    </video>
+</div>
+{% endif %}
+
+<!-- Step Timeline (auto-refreshing for running jobs) -->
+<div class="bg-gray-900 border border-gray-800 rounded-xl p-5 mb-6">
+    <div class="flex items-center gap-2 mb-4">
+        <h3 class="text-sm font-semibold text-gray-400 uppercase">Pipeline Progress</h3>
+        <div id="timeline-spinner" class="w-4 h-4 border-2 border-arena-300 border-t-transparent rounded-full animate-spin {% if job.status.value not in ('running', 'pending') %}hidden{% endif %}"></div>
+    </div>
+    <div id="timeline-container" class="flex items-start justify-between gap-1 overflow-x-auto pb-2">
+        <div class="text-gray-500 text-sm">Loading timeline...</div>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div class="lg:col-span-2">
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+            <h3 class="text-sm font-semibold text-gray-400 uppercase mb-4">Pipeline Logs (<span id="log-count">{{ logs|length }}</span>)</h3>
+            <div id="logs-container" class="space-y-2 max-h-[600px] overflow-y-auto">
+                {% if logs %}
+                {% for log in logs %}
+                <div class="flex items-start gap-3 p-3 rounded-lg border border-gray-800 {% if log.status.value == 'failed' %}border-red-900/50 bg-red-950/20{% elif log.status.value == 'success' %}border-green-900/30{% endif %}">
+                    <div class="shrink-0 mt-0.5">
+                        <span class="px-2 py-0.5 rounded text-xs font-medium status-{{ log.status.value }}">{{ log.status.value }}</span>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs font-mono text-arena-300">{{ log.step }}</span>
+                            <span class="text-xs text-gray-600">{{ log.logged_at.strftime('%H:%M:%S') if log.logged_at else '' }}</span>
+                        </div>
+                        <p class="text-sm text-gray-300 mt-1 break-words">{{ log.message }}</p>
+                    </div>
+                </div>
+                {% endfor %}
+                {% else %}
+                <p class="text-gray-500">No logs yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div>
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3 mb-4">
+            <h3 class="text-sm font-semibold text-gray-400 uppercase mb-2">Job Details</h3>
+            <div class="text-sm space-y-2">
+                <div class="flex justify-between">
+                    <span class="text-gray-500">Episode</span>
+                    {% if job.episode_id %}
+                    <a href="/episodes/{{ job.episode_id }}" class="text-arena-300 hover:underline">{{ job.episode_id }}</a>
+                    {% else %}<span class="text-gray-600">-</span>{% endif %}
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-gray-500">Started</span>
+                    <span class="text-gray-300">{{ job.started_at.strftime('%Y-%m-%d %H:%M:%S') if job.started_at else '-' }}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-gray-500">Completed</span>
+                    <span class="text-gray-300">{{ job.completed_at.strftime('%Y-%m-%d %H:%M:%S') if job.completed_at else '-' }}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-gray-500">Duration</span>
+                    <span class="text-gray-300">{% if job.duration_seconds is not none %}{{ '%.1f'|format(job.duration_seconds) }}s{% else %}-{% endif %}</span>
+                </div>
+                {% if job.final_video_path %}
+                <div class="pt-2 border-t border-gray-800">
+                    <span class="text-gray-500 text-xs">Output:</span>
+                    <p class="text-xs text-gray-400 break-all mt-1">{{ job.final_video_path }}</p>
+                </div>
+                {% endif %}
+                {% if job.thumbnail_path %}
+                <div>
+                    <span class="text-gray-500 text-xs">Thumbnail:</span>
+                    <p class="text-xs text-gray-400 break-all mt-1">{{ job.thumbnail_path }}</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Step Durations Table -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+            <h3 class="text-sm font-semibold text-gray-400 uppercase mb-3">Step Durations</h3>
+            <div id="durations-table" class="text-sm space-y-1">
+                <p class="text-gray-500">Loading...</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const JOB_ID = {{ job.id }};
+const JOB_STATUS = '{{ job.status.value }}';
+let pollTimer = null;
+
+function fmtDuration(sec) {
+    if (sec == null) return '-';
+    if (sec < 60) return sec.toFixed(1) + 's';
+    const m = Math.floor(sec / 60);
+    const s = (sec % 60).toFixed(0);
+    if (m < 60) return m + 'm ' + s + 's';
+    const h = Math.floor(m / 60);
+    return h + 'h ' + (m % 60) + 'm';
+}
+
+function stepIcon(status) {
+    if (status === 'success') return '<svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>';
+    if (status === 'running') return '<div class="w-5 h-5 border-2 border-arena-300 border-t-transparent rounded-full animate-spin"></div>';
+    if (status === 'failed') return '<svg class="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>';
+    return '<div class="w-5 h-5 rounded-full border-2 border-gray-700"></div>';
+}
+
+function renderTimeline(timeline) {
+    return timeline.map(s => {
+        const dur = s.duration_seconds != null ? `<span class="text-xs text-gray-500">${fmtDuration(s.duration_seconds)}</span>` : '';
+        const labelColor = s.status === 'running' ? 'text-arena-300 font-semibold'
+            : s.status === 'success' ? 'text-green-400'
+            : s.status === 'failed' ? 'text-red-400'
+            : 'text-gray-600';
+        return `<div class="flex flex-col items-center gap-1.5 min-w-[80px]">
+            ${stepIcon(s.status)}
+            <span class="text-xs ${labelColor}">${s.label}</span>
+            ${dur}
+        </div>`;
+    }).join('<div class="h-px w-6 bg-gray-700 mt-3 shrink-0"></div>');
+}
+
+function renderDurations(timeline) {
+    return timeline.filter(s => s.status !== 'pending').map(s => {
+        const barColor = s.status === 'success' ? 'bg-green-900/40' : s.status === 'running' ? 'bg-blue-900/40' : 'bg-red-900/40';
+        const textColor = s.status === 'success' ? 'text-green-400' : s.status === 'running' ? 'text-arena-300' : 'text-red-400';
+        return `<div class="flex items-center justify-between py-1.5 px-2 rounded ${barColor}">
+            <span class="text-gray-300">${s.label}</span>
+            <span class="${textColor} font-mono text-xs">${fmtDuration(s.duration_seconds)}</span>
+        </div>`;
+    }).join('') || '<p class="text-gray-500">No steps completed yet.</p>';
+}
+
+async function refreshTimeline() {
+    try {
+        const res = await fetch(`/api/jobs/${JOB_ID}/timeline`);
+        const data = await res.json();
+
+        document.getElementById('timeline-container').innerHTML = renderTimeline(data.timeline);
+        document.getElementById('durations-table').innerHTML = renderDurations(data.timeline);
+        document.getElementById('job-elapsed').textContent = fmtDuration(data.elapsed_seconds);
+
+        if (data.status === 'ready' || data.status === 'failed') {
+            document.getElementById('timeline-spinner').classList.add('hidden');
+            const badge = document.getElementById('job-status-badge');
+            badge.className = 'px-2 py-1 rounded-full text-xs font-medium status-' + data.status;
+            badge.textContent = data.status;
+            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+        }
+
+        // Also refresh logs
+        const logsRes = await fetch(`/api/jobs/${JOB_ID}/logs`);
+        const logsData = await logsRes.json();
+        document.getElementById('log-count').textContent = logsData.logs.length;
+        if (logsData.logs.length > 0) {
+            const container = document.getElementById('logs-container');
+            container.innerHTML = logsData.logs.map(log => {
+                const borderClass = log.status === 'failed' ? 'border-red-900/50 bg-red-950/20'
+                    : log.status === 'success' ? 'border-green-900/30' : '';
+                return `<div class="flex items-start gap-3 p-3 rounded-lg border border-gray-800 ${borderClass}">
+                    <div class="shrink-0 mt-0.5">
+                        <span class="px-2 py-0.5 rounded text-xs font-medium status-${log.status}">${log.status}</span>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs font-mono text-arena-300">${log.step}</span>
+                            <span class="text-xs text-gray-600">${log.logged_at ? log.logged_at.split('T')[1].split('.')[0] : ''}</span>
+                        </div>
+                        <p class="text-sm text-gray-300 mt-1 break-words">${log.message}</p>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+    } catch (e) {
+        console.error('Failed to refresh timeline:', e);
+    }
+}
+
+refreshTimeline();
+if (JOB_STATUS === 'running' || JOB_STATUS === 'pending') {
+    pollTimer = setInterval(refreshTimeline, 3000);
+}
+</script>
+{% endblock %}

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Spartacus Arena{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        arena: { 50:'#fef3e2',100:'#fde4b9',200:'#fbc76d',300:'#f9a825',400:'#e68900',500:'#c47400',600:'#9e5d00',700:'#7a4800',800:'#5c3600',900:'#3d2400' },
+                    }
+                }
+            }
+        }
+    </script>
+    <link href="https://vjs.zencdn.net/8.10.0/video-js.css" rel="stylesheet">
+    <script src="https://vjs.zencdn.net/8.10.0/video.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/tom-select@2.4.3/dist/css/tom-select.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/tom-select@2.4.3/dist/js/tom-select.complete.min.js"></script>
+    <style>
+        body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+        .status-pending { background: #fef3c7; color: #92400e; }
+        .status-running, .status-scripting, .status-voiceover, .status-video_gen, .status-editing { background: #dbeafe; color: #1e40af; }
+        .status-ready, .status-success, .status-uploaded { background: #d1fae5; color: #065f46; }
+        .status-failed { background: #fee2e2; color: #991b1b; }
+        .status-started { background: #e0e7ff; color: #3730a3; }
+        .video-js { width: 100%; border-radius: 0.75rem; overflow: hidden; }
+        .video-js .vjs-big-play-button { top: 50%; left: 50%; transform: translate(-50%, -50%); border-radius: 50%; width: 3em; height: 3em; line-height: 3em; border: none; background: rgba(249,168,37,0.85); }
+        .video-js .vjs-big-play-button:hover { background: rgba(249,168,37,1); }
+        .vjs-theme-arena .vjs-control-bar { background: rgba(17,24,39,0.9); }
+        .vjs-theme-arena .vjs-play-progress, .vjs-theme-arena .vjs-volume-level { background: #f9a825; }
+        .ts-wrapper { border: none !important; }
+        .ts-control { background: #1f2937 !important; border: 1px solid #374151 !important; color: #e5e7eb !important; border-radius: 0.5rem !important; font-size: 0.75rem !important; min-height: 32px !important; padding: 2px 8px !important; }
+        .ts-control input { color: #e5e7eb !important; }
+        .ts-control input::placeholder { color: #6b7280 !important; }
+        .ts-dropdown { background: #1f2937 !important; border: 1px solid #374151 !important; border-radius: 0.5rem !important; color: #e5e7eb !important; font-size: 0.75rem !important; }
+        .ts-dropdown .option { padding: 6px 10px !important; }
+        .ts-dropdown .option:hover, .ts-dropdown .active { background: #374151 !important; color: #f9a825 !important; }
+        .ts-dropdown .option .voice-meta { color: #9ca3af; font-size: 0.65rem; }
+    </style>
+    {% block head %}{% endblock %}
+</head>
+<body class="h-full bg-gray-950 text-gray-100">
+    <div class="flex h-full">
+        <nav class="w-56 bg-gray-900 border-r border-gray-800 flex flex-col py-6 px-4 shrink-0">
+            <div class="mb-8">
+                <h1 class="text-xl font-bold text-arena-300 tracking-tight">Spartacus Arena</h1>
+                <p class="text-xs text-gray-500 mt-1">Automation Dashboard</p>
+            </div>
+            <div class="flex flex-col gap-1 text-sm">
+                <a href="/" class="px-3 py-2 rounded-lg hover:bg-gray-800 transition {% block nav_dashboard %}{% endblock %}">Dashboard</a>
+                <a href="/episodes" class="px-3 py-2 rounded-lg hover:bg-gray-800 transition {% block nav_episodes %}{% endblock %}">Episodes</a>
+                <a href="/jobs" class="px-3 py-2 rounded-lg hover:bg-gray-800 transition {% block nav_jobs %}{% endblock %}">Jobs</a>
+                <a href="/characters" class="px-3 py-2 rounded-lg hover:bg-gray-800 transition {% block nav_characters %}{% endblock %}">Characters</a>
+                <hr class="border-gray-800 my-2">
+                <a href="/generate" class="px-3 py-2 rounded-lg bg-arena-700 hover:bg-arena-600 text-white font-medium transition {% block nav_generate %}{% endblock %}">Generate Episode</a>
+                <a href="/create" class="px-3 py-2 rounded-lg bg-blue-800 hover:bg-blue-700 text-white font-medium transition {% block nav_create %}{% endblock %}">Create Custom Video</a>
+                <hr class="border-gray-800 my-2">
+                <a href="/settings" class="px-3 py-2 rounded-lg hover:bg-gray-800 transition text-gray-400 {% block nav_settings %}{% endblock %}">Settings</a>
+            </div>
+        </nav>
+        <main class="flex-1 overflow-y-auto p-8">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+{% block title %}Settings - Spartacus Arena{% endblock %}
+{% block nav_settings %}bg-gray-800 text-white{% endblock %}
+
+{% block content %}
+<h2 class="text-2xl font-bold mb-6">Settings</h2>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 max-w-4xl">
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <h3 class="text-sm font-semibold text-gray-400 uppercase mb-4">API Keys Status</h3>
+        <div class="space-y-3 text-sm">
+            <div class="flex items-center justify-between">
+                <span class="text-gray-300">OpenAI</span>
+                {% if settings.openai_api_key %}
+                <span class="px-2 py-0.5 rounded text-xs bg-green-900 text-green-300">Configured</span>
+                {% else %}
+                <span class="px-2 py-0.5 rounded text-xs bg-red-900 text-red-300">Missing</span>
+                {% endif %}
+            </div>
+            <div class="flex items-center justify-between">
+                <span class="text-gray-300">ElevenLabs</span>
+                {% if settings.elevenlabs_api_key %}
+                <span class="px-2 py-0.5 rounded text-xs bg-green-900 text-green-300">Configured</span>
+                {% else %}
+                <span class="px-2 py-0.5 rounded text-xs bg-red-900 text-red-300">Missing</span>
+                {% endif %}
+            </div>
+            <div class="flex items-center justify-between">
+                <span class="text-gray-300">Minimax</span>
+                {% if settings.minimax_api_key %}
+                <span class="px-2 py-0.5 rounded text-xs bg-green-900 text-green-300">Configured</span>
+                {% else %}
+                <span class="px-2 py-0.5 rounded text-xs bg-yellow-900 text-yellow-300">Not Set</span>
+                {% endif %}
+            </div>
+            <div class="flex items-center justify-between">
+                <span class="text-gray-300">Runway</span>
+                {% if settings.runway_api_key %}
+                <span class="px-2 py-0.5 rounded text-xs bg-green-900 text-green-300">Configured</span>
+                {% else %}
+                <span class="px-2 py-0.5 rounded text-xs bg-yellow-900 text-yellow-300">Not Set</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <h3 class="text-sm font-semibold text-gray-400 uppercase mb-4">Video Providers</h3>
+        <p class="text-xs text-gray-500 mb-3">Drag to reorder. Pipeline tries providers top-to-bottom.</p>
+        <ul id="providerList" class="space-y-2 mb-4">
+            {% for p in settings.video_provider_order %}
+            <li draggable="true" data-provider="{{ p }}"
+                class="provider-item flex items-center gap-3 bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 cursor-grab active:cursor-grabbing select-none transition-all duration-150 hover:border-arena-500">
+                <svg class="w-4 h-4 text-gray-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"/>
+                </svg>
+                <span class="flex-1 text-sm font-medium text-gray-200">
+                    {% if p == 'wan21' %}Wan 2.1{% elif p == 'minimax' %}Minimax{% elif p == 'runway' %}Runway{% else %}{{ p }}{% endif %}
+                </span>
+                {% if p == 'wan21' %}
+                <span class="text-xs px-1.5 py-0.5 rounded {% if settings.wan21_enabled %}bg-green-900/50 text-green-400{% else %}bg-red-900/50 text-red-400{% endif %}">
+                    {{ 'On' if settings.wan21_enabled else 'Off' }}
+                </span>
+                {% elif p == 'minimax' %}
+                <span class="text-xs px-1.5 py-0.5 rounded {% if settings.minimax_enabled %}bg-green-900/50 text-green-400{% else %}bg-red-900/50 text-red-400{% endif %}">
+                    {{ 'On' if settings.minimax_enabled else 'Off' }}
+                </span>
+                {% elif p == 'runway' %}
+                <span class="text-xs px-1.5 py-0.5 rounded {% if settings.runway_enabled %}bg-green-900/50 text-green-400{% else %}bg-red-900/50 text-red-400{% endif %}">
+                    {{ 'On' if settings.runway_enabled else 'Off' }}
+                </span>
+                {% endif %}
+                <span class="text-xs font-mono text-gray-500">#<span class="provider-rank">{{ loop.index }}</span></span>
+            </li>
+            {% endfor %}
+        </ul>
+        <div class="flex items-center gap-3">
+            <button id="saveOrderBtn" onclick="saveProviderOrder()" disabled
+                    class="px-4 py-1.5 bg-arena-600 hover:bg-arena-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-xs font-semibold rounded-lg transition-colors">
+                Save Order
+            </button>
+            <span id="orderStatus" class="text-xs text-gray-500"></span>
+        </div>
+        <hr class="border-gray-700 my-4">
+        <div class="space-y-2 text-sm">
+            <div class="flex items-center justify-between">
+                <span class="text-gray-300">Wan 2.1 Model</span>
+                <span class="text-gray-400 text-xs">{{ settings.wan21_model_id }} ({{ settings.wan21_device }})</span>
+            </div>
+            <div class="flex items-center justify-between">
+                <span class="text-gray-300">Max Frames</span>
+                <span class="text-gray-400">{{ settings.wan21_max_frames }}</span>
+            </div>
+            <div class="flex items-center justify-between">
+                <span class="text-gray-300">Minimax Unit Price</span>
+                <span class="text-gray-400">${{ settings.minimax_unit_price }}/unit</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <h3 class="text-sm font-semibold text-gray-400 uppercase mb-4">Video Settings</h3>
+        <div class="space-y-2 text-sm">
+            <div class="flex justify-between"><span class="text-gray-500">Resolution</span><span class="text-gray-300">{{ settings.video_resolution }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">FPS</span><span class="text-gray-300">{{ settings.video_fps }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Video Codec</span><span class="text-gray-300">{{ settings.video_codec }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Video Bitrate</span><span class="text-gray-300">{{ settings.video_bitrate }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Audio Codec</span><span class="text-gray-300">{{ settings.audio_codec }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Audio Bitrate</span><span class="text-gray-300">{{ settings.audio_bitrate }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Scene Duration</span><span class="text-gray-300">{{ settings.default_scene_duration_seconds }}s</span></div>
+        </div>
+    </div>
+
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <h3 class="text-sm font-semibold text-gray-400 uppercase mb-4">Output Paths</h3>
+        <div class="space-y-2 text-sm">
+            <div class="flex justify-between"><span class="text-gray-500">Root</span><span class="text-gray-400 text-xs">{{ settings.output_root }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Scripts</span><span class="text-gray-400 text-xs">{{ settings.scripts_dir }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Audio</span><span class="text-gray-400 text-xs">{{ settings.audio_dir }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Clips</span><span class="text-gray-400 text-xs">{{ settings.clips_dir }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Final</span><span class="text-gray-400 text-xs">{{ settings.final_dir }}</span></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.provider-item.drag-over { border-color: #d97706; background: rgba(217,119,6,0.08); }
+.provider-item.dragging  { opacity: 0.4; }
+</style>
+<script>
+(function() {
+    const list = document.getElementById('providerList');
+    const btn  = document.getElementById('saveOrderBtn');
+    const stat = document.getElementById('orderStatus');
+    const orig = getOrder();
+    let dragEl = null;
+
+    function getOrder() {
+        return [...list.querySelectorAll('li')].map(li => li.dataset.provider);
+    }
+    function updateRanks() {
+        list.querySelectorAll('.provider-rank').forEach((el, i) => el.textContent = i + 1);
+        const changed = JSON.stringify(getOrder()) !== JSON.stringify(orig);
+        btn.disabled = !changed;
+        stat.textContent = changed ? 'Unsaved changes' : '';
+        stat.className = 'text-xs ' + (changed ? 'text-yellow-400' : 'text-gray-500');
+    }
+
+    list.addEventListener('dragstart', e => {
+        dragEl = e.target.closest('li');
+        if (dragEl) dragEl.classList.add('dragging');
+    });
+    list.addEventListener('dragend', () => {
+        if (dragEl) dragEl.classList.remove('dragging');
+        list.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+        dragEl = null;
+        updateRanks();
+    });
+    list.addEventListener('dragover', e => {
+        e.preventDefault();
+        const target = e.target.closest('li');
+        if (!target || target === dragEl) return;
+        list.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+        target.classList.add('drag-over');
+        const rect = target.getBoundingClientRect();
+        const mid  = rect.top + rect.height / 2;
+        if (e.clientY < mid) {
+            list.insertBefore(dragEl, target);
+        } else {
+            list.insertBefore(dragEl, target.nextSibling);
+        }
+    });
+    list.addEventListener('drop', e => {
+        e.preventDefault();
+        list.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+    });
+
+    window.saveProviderOrder = async function() {
+        const order = getOrder();
+        btn.disabled = true;
+        stat.textContent = 'Saving...';
+        stat.className = 'text-xs text-blue-400';
+        try {
+            const res = await fetch('/api/settings/provider-order', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ order }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                stat.textContent = '✓ ' + data.message;
+                stat.className = 'text-xs text-green-400';
+                orig.length = 0;
+                orig.push(...data.provider_order);
+                setTimeout(() => { stat.textContent = ''; stat.className = 'text-xs text-gray-500'; }, 3000);
+            } else {
+                stat.textContent = '✗ ' + (data.error || 'Failed');
+                stat.className = 'text-xs text-red-400';
+                btn.disabled = false;
+            }
+        } catch(err) {
+            stat.textContent = '✗ ' + err.message;
+            stat.className = 'text-xs text-red-400';
+            btn.disabled = false;
+        }
+    };
+})();
+</script>
+{% endblock %}

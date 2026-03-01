@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% block title %}Generate Episode - Spartacus Arena{% endblock %}
+{% block nav_generate %}{% endblock %}
+
+{% block content %}
+<h2 class="text-2xl font-bold mb-6">Generate New Episode</h2>
+
+<div class="max-w-3xl">
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+        <p class="text-gray-300 mb-4">This will run the full pipeline: Script &rarr; SEO &rarr; Voiceover &rarr; Subtitles &rarr; Video &rarr; Merge &rarr; Thumbnail &rarr; Short</p>
+        <button id="btn-generate" onclick="startGeneration()" class="px-6 py-3 bg-arena-600 hover:bg-arena-500 text-white font-semibold rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed">
+            Start Generation
+        </button>
+    </div>
+
+    <div id="status-panel" class="hidden">
+        <!-- Progress Header -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-4">
+            <div class="flex items-center justify-between mb-5">
+                <div class="flex items-center gap-3">
+                    <div id="status-spinner" class="w-5 h-5 border-2 border-arena-300 border-t-transparent rounded-full animate-spin"></div>
+                    <h3 class="text-lg font-semibold" id="status-title">Pipeline Running...</h3>
+                </div>
+                <span id="total-elapsed" class="text-sm text-gray-400 font-mono"></span>
+            </div>
+            <!-- Step Progress Bar -->
+            <div id="step-progress" class="flex items-start justify-between gap-1 overflow-x-auto pb-2"></div>
+        </div>
+
+        <!-- Live Logs -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-sm font-semibold text-gray-400 uppercase">Live Logs</h3>
+                <span id="log-count-badge" class="text-xs text-gray-500 font-mono">0 entries</span>
+            </div>
+            <div id="logs-container" class="space-y-2 max-h-96 overflow-y-auto">
+                <p class="text-gray-500 text-sm">Waiting for pipeline to start...</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let pollInterval = null;
+let timelinePoll = null;
+let currentJobId = null;
+
+function fmtDuration(sec) {
+    if (sec == null) return '';
+    if (sec < 60) return sec.toFixed(1) + 's';
+    const m = Math.floor(sec / 60);
+    const s = (sec % 60).toFixed(0);
+    if (m < 60) return m + 'm ' + s + 's';
+    const h = Math.floor(m / 60);
+    return h + 'h ' + (m % 60) + 'm';
+}
+
+function stepIcon(status) {
+    if (status === 'success') return '<svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>';
+    if (status === 'running') return '<div class="w-5 h-5 border-2 border-arena-300 border-t-transparent rounded-full animate-spin"></div>';
+    if (status === 'failed') return '<svg class="w-5 h-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>';
+    return '<div class="w-5 h-5 rounded-full border-2 border-gray-700"></div>';
+}
+
+function renderStepProgress(timeline) {
+    return timeline.map(s => {
+        const dur = s.duration_seconds != null ? `<span class="text-xs text-gray-500">${fmtDuration(s.duration_seconds)}</span>` : '';
+        const labelColor = s.status === 'running' ? 'text-arena-300 font-semibold'
+            : s.status === 'success' ? 'text-green-400'
+            : s.status === 'failed' ? 'text-red-400'
+            : 'text-gray-600';
+        return `<div class="flex flex-col items-center gap-1.5 min-w-[70px]">
+            ${stepIcon(s.status)}
+            <span class="text-xs ${labelColor}">${s.label}</span>
+            ${dur}
+        </div>`;
+    }).join('<div class="h-px w-4 bg-gray-700 mt-3 shrink-0"></div>');
+}
+
+async function startGeneration() {
+    const btn = document.getElementById('btn-generate');
+    btn.disabled = true;
+    btn.textContent = 'Starting...';
+
+    document.getElementById('status-panel').classList.remove('hidden');
+    document.getElementById('logs-container').innerHTML = '<p class="text-gray-500 text-sm">Waiting for pipeline to start...</p>';
+
+    const res = await fetch('/api/generate', { method: 'POST' });
+    btn.textContent = 'Running...';
+    setTimeout(pollForJob, 2000);
+}
+
+async function pollForJob() {
+    const res = await fetch('/api/jobs/latest');
+    const data = await res.json();
+    if (data.job_id) {
+        currentJobId = data.job_id;
+        pollInterval = setInterval(pollLogs, 3000);
+        timelinePoll = setInterval(pollTimeline, 3000);
+        pollLogs();
+        pollTimeline();
+    } else {
+        setTimeout(pollForJob, 2000);
+    }
+}
+
+async function pollTimeline() {
+    if (!currentJobId) return;
+    try {
+        const res = await fetch(`/api/jobs/${currentJobId}/timeline`);
+        const data = await res.json();
+
+        document.getElementById('step-progress').innerHTML = renderStepProgress(data.timeline);
+        document.getElementById('total-elapsed').textContent = fmtDuration(data.elapsed_seconds);
+
+        if (data.status === 'ready' || data.status === 'failed') {
+            stopPolling(data.status);
+        }
+    } catch (e) {}
+}
+
+async function pollLogs() {
+    if (!currentJobId) return;
+    const res = await fetch(`/api/jobs/${currentJobId}/logs`);
+    const data = await res.json();
+
+    const container = document.getElementById('logs-container');
+    document.getElementById('log-count-badge').textContent = data.logs.length + ' entries';
+
+    if (data.logs.length === 0) {
+        container.innerHTML = '<p class="text-gray-500 text-sm">Waiting for logs...</p>';
+        return;
+    }
+
+    container.innerHTML = data.logs.map(log => {
+        const borderClass = log.status === 'failed' ? 'border-red-900/50 bg-red-950/20'
+            : log.status === 'success' ? 'border-green-900/30' : '';
+        return `<div class="flex items-start gap-3 p-3 rounded-lg border border-gray-800 ${borderClass}">
+            <span class="px-2 py-0.5 rounded text-xs font-medium status-${log.status} shrink-0">${log.status}</span>
+            <div>
+                <span class="text-xs font-mono text-arena-300">${log.step}</span>
+                <span class="text-xs text-gray-600 ml-2">${log.logged_at ? log.logged_at.split('T')[1].split('.')[0] : ''}</span>
+                <p class="text-sm text-gray-300 mt-1">${log.message}</p>
+            </div>
+        </div>`;
+    }).join('');
+
+    container.scrollTop = container.scrollHeight;
+
+    if (data.job_status === 'ready' || data.job_status === 'failed') {
+        stopPolling(data.job_status);
+    }
+}
+
+function stopPolling(status) {
+    if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+    if (timelinePoll) { clearInterval(timelinePoll); timelinePoll = null; }
+
+    const spinner = document.getElementById('status-spinner');
+    spinner.classList.remove('animate-spin');
+    const title = document.getElementById('status-title');
+    const btn = document.getElementById('btn-generate');
+
+    if (status === 'ready') {
+        title.textContent = 'Pipeline Complete!';
+        spinner.classList.add('text-green-400');
+        title.classList.add('text-green-400');
+    } else {
+        title.textContent = 'Pipeline Failed';
+        spinner.classList.add('text-red-400');
+        title.classList.add('text-red-400');
+    }
+    btn.disabled = false;
+    btn.textContent = 'Generate Another';
+}
+</script>
+{% endblock %}
