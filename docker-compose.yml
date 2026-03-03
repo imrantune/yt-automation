@@ -32,6 +32,65 @@ services:
       timeout: 5s
       retries: 5
 
+  app:
+    build: .
+    container_name: spartacus_app
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-spartacus}:${POSTGRES_PASSWORD:-spartacus}@postgres:5432/${POSTGRES_DB:-spartacus_db}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-spartacus}@redis:6379/0
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - app_output:/app/output
+      - ./assets:/app/assets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "alembic upgrade head &&
+             python -c 'from database.seed import seed_data; seed_data()' 2>/dev/null;
+             uvicorn web.app:app --host 0.0.0.0 --port 8000"
+
+  celery-worker:
+    build: .
+    container_name: spartacus_worker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-spartacus}:${POSTGRES_PASSWORD:-spartacus}@postgres:5432/${POSTGRES_DB:-spartacus_db}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-spartacus}@redis:6379/0
+    volumes:
+      - app_output:/app/output
+      - ./assets:/app/assets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A scheduler.tasks worker --loglevel=info --concurrency=2
+
+  celery-beat:
+    build: .
+    container_name: spartacus_beat
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-spartacus}:${POSTGRES_PASSWORD:-spartacus}@postgres:5432/${POSTGRES_DB:-spartacus_db}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-spartacus}@redis:6379/0
+    volumes:
+      - app_output:/app/output
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A scheduler.tasks beat --loglevel=info
+
 volumes:
   postgres_data:
   redis_data:
+  app_output:

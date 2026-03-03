@@ -35,7 +35,11 @@ PIPELINE_STEPS = [
     {"key": "seo", "label": "SEO"},
     {"key": "voiceover", "label": "Voiceover"},
     {"key": "subtitles", "label": "Subtitles"},
+    {"key": "image_gen", "label": "DALL-E"},
+    {"key": "ken_burns", "label": "Ken Burns"},
     {"key": "video_gen", "label": "Video Gen"},
+    {"key": "music", "label": "Music"},
+    {"key": "sfx", "label": "SFX"},
     {"key": "editing", "label": "Merge"},
     {"key": "thumbnail", "label": "Thumbnail"},
     {"key": "shorts", "label": "Shorts"},
@@ -185,11 +189,13 @@ async def episode_detail(request: Request, episode_id: int):
 
         scene_media = []
         for scene in scenes:
+            img_path = settings.output_root / "images" / f"episode_{episode.episode_number:04d}_scene_{scene.scene_order:02d}.png"
             scene_media.append({
                 "scene": scene,
                 "audio_url": _file_to_media_url(scene.audio_file_path),
                 "video_url": _file_to_media_url(scene.video_clip_path),
                 "subtitle_url": _file_to_media_url(scene.subtitle_file_path),
+                "image_url": _file_to_media_url(str(img_path)) if img_path.exists() else None,
             })
 
         short_media = []
@@ -964,6 +970,211 @@ def _release_episode_lock(episode_id: int) -> None:
         _episode_locks.pop(episode_id, None)
 
 
+@app.post("/api/episodes/{episode_id}/retry-images")
+async def api_retry_images(episode_id: int):
+    """Re-run DALL-E image generation for scenes missing images, reusing the existing job."""
+    lock_err = _acquire_episode_lock(episode_id, "images")
+    if lock_err:
+        return JSONResponse({"error": lock_err}, status_code=409)
+
+    session = SessionLocal()
+    try:
+        episode = session.execute(
+            select(Episode).where(Episode.id == episode_id)
+        ).scalar_one_or_none()
+        if not episode:
+            _release_episode_lock(episode_id)
+            return JSONResponse({"error": "Episode not found"}, status_code=404)
+
+        job = _get_or_create_job(session, episode_id)
+        job_id = job.id
+
+        def _run(ep_id: int, jid: int):
+            try:
+                from pipeline.image_generator import generate_scene_image, IMAGES_DIR
+                from pipeline.cost_tracker import log_dalle
+                from database.connection import SessionLocal as SL, log_job_step
+                from database.models import StepStatus
+                from sqlalchemy import select as sel
+                from pathlib import Path
+                import logging
+                log = logging.getLogger(__name__)
+
+                s = SL()
+                try:
+                    ep = s.execute(sel(Episode).where(Episode.id == ep_id)).scalar_one()
+                    scenes = list(s.execute(sel(Scene).where(Scene.episode_id == ep_id).order_by(Scene.scene_order)).scalars())
+
+                    log_job_step(s, jid, "image_gen", StepStatus.STARTED,
+                                 f"Regenerating DALL-E images for {len(scenes)} scenes.")
+                    s.commit()
+
+                    for scene in scenes:
+                        img_path = generate_scene_image(s, ep, scene)
+                        log_dalle(s, ep.id, jid, f"scene_{scene.scene_order}_image",
+                                  size="1792x1024", quality="hd")
+                        s.commit()
+
+                    log_job_step(s, jid, "image_gen", StepStatus.SUCCESS,
+                                 f"Generated {len(scenes)} DALL-E images.")
+                    s.commit()
+                    log.info("DALL-E image retry completed for Episode #%s (Job #%s)", ep.episode_number, jid)
+                except Exception as exc:
+                    s.rollback()
+                    log.exception("Retry images failed for ep %s", ep_id)
+                    try:
+                        log_job_step(s, jid, "image_gen", StepStatus.FAILED, str(exc)[:500])
+                        s.commit()
+                    except Exception:
+                        pass
+                finally:
+                    s.close()
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception("Retry images outer error.")
+            finally:
+                _release_episode_lock(ep_id)
+
+        thread = threading.Thread(target=_run, args=(episode_id, job_id), daemon=True)
+        thread.start()
+        return JSONResponse({"status": "started", "message": f"DALL-E image retry started on Job #{job_id}.", "job_id": job_id})
+    finally:
+        session.close()
+
+
+@app.post("/api/episodes/{episode_id}/retry-kenburns")
+async def api_retry_kenburns(episode_id: int):
+    """Re-run Ken Burns animation from existing images, reusing the existing job."""
+    lock_err = _acquire_episode_lock(episode_id, "kenburns")
+    if lock_err:
+        return JSONResponse({"error": lock_err}, status_code=409)
+
+    session = SessionLocal()
+    try:
+        episode = session.execute(
+            select(Episode).where(Episode.id == episode_id)
+        ).scalar_one_or_none()
+        if not episode:
+            _release_episode_lock(episode_id)
+            return JSONResponse({"error": "Episode not found"}, status_code=404)
+
+        job = _get_or_create_job(session, episode_id)
+        job_id = job.id
+
+        def _run(ep_id: int, jid: int):
+            try:
+                from pipeline.video_generator import apply_ken_burns, merge_episode_assets
+                from pipeline.image_generator import IMAGES_DIR
+                from pipeline.music import mix_episode_music
+                from pipeline.thumbnail import ThumbnailGenerator
+                from pipeline.shorts import ShortsGenerator
+                from database.connection import SessionLocal as SL, log_job_step, mark_job_ready, set_episode_status
+                from database.models import EpisodeStatus, StepStatus, SceneStatus
+                from sqlalchemy import select as sel
+                from pathlib import Path
+                import logging
+                log = logging.getLogger(__name__)
+
+                s = SL()
+                try:
+                    ep = s.execute(sel(Episode).where(Episode.id == ep_id)).scalar_one()
+                    scenes = list(s.execute(sel(Scene).where(Scene.episode_id == ep_id).order_by(Scene.scene_order)).scalars())
+
+                    log_job_step(s, jid, "ken_burns", StepStatus.STARTED,
+                                 f"Applying Ken Burns effects to {len(scenes)} scenes.")
+                    s.commit()
+
+                    for scene in scenes:
+                        img_path = IMAGES_DIR / f"episode_{ep.episode_number:04d}_scene_{scene.scene_order:02d}.png"
+                        if not img_path.exists():
+                            raise FileNotFoundError(f"Image not found: {img_path}. Run DALL-E image generation first.")
+
+                        clip_path = settings.clips_dir / f"episode_{ep.episode_number:04d}_scene_{scene.scene_order:02d}.mp4"
+                        scene_type = scene.scene_type if scene.scene_type else __import__('database.models', fromlist=['SceneType']).SceneType.OTHER
+                        apply_ken_burns(
+                            image_path=img_path,
+                            output_path=clip_path,
+                            duration_seconds=float(settings.default_scene_duration_seconds),
+                            scene_type=scene_type,
+                        )
+                        scene.video_clip_path = str(clip_path)
+                        scene.status = SceneStatus.VIDEO_DONE
+                        s.add(scene)
+                        s.commit()
+
+                    log_job_step(s, jid, "ken_burns", StepStatus.SUCCESS,
+                                 f"Ken Burns effects applied to {len(scenes)} clips.")
+                    s.commit()
+
+                    # Auto-continue: Merge
+                    log_job_step(s, jid, "editing", StepStatus.STARTED, "Merging clips and audio with FFmpeg.")
+                    s.commit()
+
+                    mixed_audio = mix_episode_music(ep.episode_number, scenes)
+                    clip_paths = [Path(sc.video_clip_path) for sc in scenes if sc.video_clip_path]
+                    audio_paths = mixed_audio if mixed_audio else [Path(sc.audio_file_path) for sc in scenes if sc.audio_file_path]
+                    subtitle_paths = [Path(sc.subtitle_file_path) for sc in scenes if sc.subtitle_file_path and Path(sc.subtitle_file_path).exists()]
+                    final_path = settings.final_dir / f"episode_{ep.episode_number:04d}.mp4"
+
+                    duration = merge_episode_assets(
+                        episode_number=ep.episode_number,
+                        clip_paths=clip_paths,
+                        audio_paths=audio_paths,
+                        output_path=final_path,
+                        subtitle_paths=subtitle_paths,
+                    )
+                    job_obj = s.execute(sel(VideoJob).where(VideoJob.id == jid)).scalar_one()
+                    mark_job_ready(s, job=job_obj, final_video_path=str(final_path), duration_seconds=duration)
+                    set_episode_status(s, ep, EpisodeStatus.READY)
+                    log_job_step(s, jid, "editing", StepStatus.SUCCESS, f"Final video: {final_path}")
+                    s.commit()
+
+                    try:
+                        thumb_gen = ThumbnailGenerator()
+                        thumb_gen.generate_thumbnail(session=s, job_id=jid, episode=ep, job=job_obj)
+                        s.commit()
+                    except Exception as exc:
+                        log.warning("Thumbnail generation failed (non-fatal): %s", exc)
+                        log_job_step(s, jid, "thumbnail", StepStatus.FAILED, str(exc)[:300])
+                        s.commit()
+
+                    try:
+                        shorts_gen = ShortsGenerator()
+                        shorts_gen.generate_short(session=s, job_id=jid, episode=ep)
+                        s.commit()
+                    except Exception as exc:
+                        log.warning("Shorts generation failed (non-fatal): %s", exc)
+                        log_job_step(s, jid, "shorts", StepStatus.FAILED, str(exc)[:300])
+                        s.commit()
+
+                    log.info("Ken Burns retry pipeline completed for Episode #%s (Job #%s)", ep.episode_number, jid)
+                except Exception as exc:
+                    s.rollback()
+                    log.exception("Retry Ken Burns failed for ep %s", ep_id)
+                    try:
+                        log_job_step(s, jid, "ken_burns", StepStatus.FAILED, str(exc)[:500])
+                        job_obj = s.execute(sel(VideoJob).where(VideoJob.id == jid)).scalar_one_or_none()
+                        if job_obj:
+                            job_obj.status = JobStatus.FAILED
+                            s.add(job_obj)
+                        s.commit()
+                    except Exception:
+                        pass
+                finally:
+                    s.close()
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception("Retry Ken Burns outer error.")
+            finally:
+                _release_episode_lock(ep_id)
+
+        thread = threading.Thread(target=_run, args=(episode_id, job_id), daemon=True)
+        thread.start()
+        return JSONResponse({"status": "started", "message": f"Ken Burns retry started on Job #{job_id}.", "job_id": job_id})
+    finally:
+        session.close()
+
+
 @app.post("/api/episodes/{episode_id}/retry-video")
 async def api_retry_video(episode_id: int):
     """Re-run video generation for missing scenes, reusing the existing job."""
@@ -1009,25 +1220,15 @@ async def api_retry_video(episode_id: int):
                     skip = [sc for sc in scenes if sc.video_clip_path and Path(sc.video_clip_path).exists()]
                     need = [sc for sc in scenes if not sc.video_clip_path or not Path(sc.video_clip_path).exists()]
 
-                    log_job_step(s, jid, "video_gen", StepStatus.STARTED,
-                                 f"Generating {len(need)} clips (skipping {len(skip)} existing).")
-                    s.commit()
-
                     if need:
                         gen = VideoGenerator()
                         gen.generate_episode_clips(session=s, job_id=jid, episode=ep, scenes_override=need)
                         s.commit()
 
-                    log_job_step(s, jid, "video_gen", StepStatus.SUCCESS,
-                                 f"Video generation complete — {len(need)} new clips.")
-                    s.commit()
-
-                    # Re-fetch scenes to get updated clip paths
                     scenes = list(s.execute(
                         sel(SceneModel).where(SceneModel.episode_id == ep_id).order_by(SceneModel.scene_order)
                     ).scalars())
 
-                    # Auto-continue: Merge
                     log_job_step(s, jid, "editing", StepStatus.STARTED, "Merging clips and audio with FFmpeg.")
                     s.commit()
 
@@ -1050,7 +1251,6 @@ async def api_retry_video(episode_id: int):
                     log_job_step(s, jid, "editing", StepStatus.SUCCESS, f"Final video: {final_path}")
                     s.commit()
 
-                    # Auto-continue: Thumbnail
                     try:
                         thumb_gen = ThumbnailGenerator()
                         thumb_gen.generate_thumbnail(session=s, job_id=jid, episode=ep, job=job_obj)
@@ -1060,7 +1260,6 @@ async def api_retry_video(episode_id: int):
                         log_job_step(s, jid, "thumbnail", StepStatus.FAILED, str(exc)[:300])
                         s.commit()
 
-                    # Auto-continue: Shorts
                     try:
                         shorts_gen = ShortsGenerator()
                         shorts_gen.generate_short(session=s, job_id=jid, episode=ep)
@@ -1178,7 +1377,7 @@ async def api_retry_merge(episode_id: int):
                         log_job_step(s, jid, "shorts", StepStatus.FAILED, str(exc)[:300])
                         s.commit()
 
-                    log.info("Merge pipeline completed for episode %s (Job #%s)", ep.episode_number, jid)
+                    log.info("Merge pipeline completed for Episode #%s (Job #%s)", ep.episode_number, jid)
                 except Exception as exc:
                     s.rollback()
                     log.exception("Retry merge failed for ep %s", ep_id)
@@ -1277,7 +1476,7 @@ async def api_retry_full(episode_id: int):
                     shorts_gen.generate_short(session=s, job_id=jid, episode=ep)
                     s.commit()
 
-                    log.info("Retry-full pipeline completed for episode %s", ep.episode_number)
+                    log.info("Retry-full pipeline completed for Episode #%s (Job #%s)", ep.episode_number, jid)
                 except Exception as exc:
                     s.rollback()
                     log.exception("Retry-full failed for ep %s", ep_id)
@@ -1601,7 +1800,7 @@ async def api_custom_generate(request: Request):
             log_job_step(s, job_id, "video_gen", StepStatus.STARTED, f"Generating {len(scenes_data)} clips with {provider}.")
             s.commit()
 
-            if provider in ("minimax", "wan21", "runway"):
+            if provider in ("minimax", "wan21", "runway", "kling"):
                 from pipeline.video_generator import VideoGenerator
                 gen = VideoGenerator()
                 for i, sc in enumerate(scenes_data):
@@ -1631,7 +1830,7 @@ async def api_custom_generate(request: Request):
             from pipeline.video_generator import merge_episode_assets
             final_path = custom_dir / f"{title.replace(' ', '_')[:50]}.mp4"
             duration = merge_episode_assets(
-                episode_number=job_id,
+                episode_number=0,  # Custom videos don't have a formal episode number
                 clip_paths=clip_paths,
                 audio_paths=audio_paths,
                 output_path=final_path,
@@ -1699,8 +1898,49 @@ async def api_update_provider_order(request: Request):
 
         return JSONResponse({
             "status": "ok",
-            "provider_order": list(settings.video_provider_order),
             "message": f"Provider order updated to: {order_str}",
+            "provider_order": list(settings.video_provider_order),
+        })
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.post("/api/settings/image-provider")
+async def api_set_image_provider(request: Request):
+    """Switch image provider between dall-e and midjourney."""
+    global settings  # noqa: PLW0603
+    try:
+        body = await request.json()
+        provider = (body.get("provider") or "").strip().lower()
+        if provider not in ("dall-e", "midjourney"):
+            return JSONResponse({"error": "provider must be 'dall-e' or 'midjourney'"}, status_code=400)
+
+        from config.settings import update_env_value, reload_settings
+        update_env_value("IMAGE_PROVIDER", provider)
+        if provider == "midjourney":
+            update_env_value("MIDJOURNEY_ENABLED", "true")
+        settings = reload_settings(require_api_keys=False)
+
+        return JSONResponse({
+            "status": "ok",
+            "image_provider": provider,
+            "message": f"Image provider switched to {provider}.",
+        })
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.post("/api/settings/reload")
+async def api_reload_settings():
+    """Manually reload settings from .env file."""
+    global settings  # noqa: PLW0603
+    try:
+        from config.settings import reload_settings
+        settings = reload_settings(require_api_keys=False)
+        return JSONResponse({
+            "status": "ok",
+            "message": "Settings reloaded from .env successfully.",
+            "wan21_enabled": settings.wan21_enabled,
         })
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
@@ -1715,4 +1955,427 @@ async def api_settings_current():
         "wan21_enabled": settings.wan21_enabled,
         "runway_enabled": settings.runway_enabled,
         "minimax_unit_price": settings.minimax_unit_price,
+        "image_provider": settings.image_provider,
+        "midjourney_enabled": settings.midjourney_enabled,
     })
+
+
+# ─── Playground ───────────────────────────────────────────────────────────────
+
+import hashlib
+import json as _json
+import logging as _logging
+import traceback as _tb
+
+_pg_log = _logging.getLogger("playground")
+PLAYGROUND_DIR = OUTPUT_DIR / "playground"
+PLAYGROUND_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _pg_save_meta(test_id: str, provider: str, category: str, prompt: str,
+                  asset_file: str, cost: float, extra: dict | None = None) -> Path:
+    """Save a JSON manifest alongside a playground asset for history browsing."""
+    meta = {
+        "id": test_id,
+        "provider": provider,
+        "category": category,
+        "prompt": prompt,
+        "asset_file": asset_file,
+        "media_url": _file_to_media_url(asset_file),
+        "cost": cost,
+        "file_size_kb": round(Path(asset_file).stat().st_size / 1024, 1) if Path(asset_file).exists() else 0,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        **(extra or {}),
+    }
+    meta_path = Path(asset_file).with_suffix(".json")
+    meta_path.write_text(_json.dumps(meta, indent=2), encoding="utf-8")
+    return meta_path
+
+
+def _pg_test_id() -> str:
+    return f"{int(datetime.now().timestamp())}_{hashlib.md5(os.urandom(8)).hexdigest()[:6]}"
+
+
+@app.get("/playground", response_class=HTMLResponse)
+async def playground_page(request: Request):
+    el_key = os.environ.get("ELEVENLABS_API_KEY", "").strip()
+    el_vid = os.environ.get("ELEVENLABS_VOICE_ID", "").strip()
+    return templates.TemplateResponse("playground.html", {
+        "request": request,
+        "settings": settings,
+        "elevenlabs_ready": bool(el_key and el_vid),
+    })
+
+
+@app.get("/api/playground/history")
+async def api_playground_history(request: Request):
+    """List saved playground results with pagination and optional provider filter."""
+    provider_filter = request.query_params.get("provider", "").strip().lower()
+    category_filter = request.query_params.get("category", "").strip().lower()
+    page = max(1, int(request.query_params.get("page", 1)))
+    per_page = min(50, max(5, int(request.query_params.get("per_page", 12))))
+
+    meta_files = sorted(PLAYGROUND_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+
+    items: list[dict] = []
+    for mf in meta_files:
+        try:
+            data = _json.loads(mf.read_text(encoding="utf-8"))
+            if provider_filter and data.get("provider", "").lower() != provider_filter:
+                continue
+            if category_filter and data.get("category", "").lower() != category_filter:
+                continue
+            asset_path = Path(data.get("asset_file", ""))
+            data["media_url"] = _file_to_media_url(str(asset_path)) if asset_path.exists() else None
+            data["file_exists"] = asset_path.exists()
+            items.append(data)
+        except Exception:
+            continue
+
+    total = len(items)
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    start = (page - 1) * per_page
+    page_items = items[start:start + per_page]
+
+    total_cost = sum(i.get("cost", 0) for i in items)
+
+    return JSONResponse({
+        "items": page_items,
+        "page": page,
+        "per_page": per_page,
+        "total": total,
+        "total_pages": total_pages,
+        "total_cost": round(total_cost, 4),
+    })
+
+
+@app.delete("/api/playground/{test_id}")
+async def api_playground_delete(test_id: str):
+    """Delete a single playground result by its test ID."""
+    found = False
+    for mf in PLAYGROUND_DIR.glob("*.json"):
+        try:
+            data = _json.loads(mf.read_text(encoding="utf-8"))
+            if data.get("id") != test_id:
+                continue
+            found = True
+            asset = Path(data.get("asset_file", ""))
+            if asset.exists():
+                asset.unlink()
+            mf.unlink()
+            # Ken Burns may have a corresponding input image
+            kb_input = PLAYGROUND_DIR / f"kb_input_{test_id.split('_')[0]}.png"
+            if kb_input.exists():
+                kb_input.unlink()
+            break
+        except Exception:
+            continue
+    if not found:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    return JSONResponse({"status": "deleted", "id": test_id})
+
+
+@app.delete("/api/playground/clear/all")
+async def api_playground_clear_all():
+    """Delete all playground results."""
+    count = 0
+    for f in PLAYGROUND_DIR.iterdir():
+        if f.is_file():
+            f.unlink()
+            count += 1
+    return JSONResponse({"status": "cleared", "files_removed": count})
+
+
+@app.post("/api/playground/dalle")
+async def api_playground_dalle(request: Request):
+    """Test DALL-E 3 image generation with a custom prompt."""
+    try:
+        body = await request.json()
+        prompt = (body.get("prompt") or "").strip()
+        size = body.get("size", "1792x1024")
+        quality = body.get("quality", "hd")
+        if not prompt:
+            return JSONResponse({"error": "Prompt is required"}, status_code=400)
+        if not settings.openai_api_key:
+            return JSONResponse({"error": "OpenAI API key not configured"}, status_code=400)
+
+        from openai import OpenAI
+        import requests as req
+        from PIL import Image
+        from io import BytesIO
+
+        tid = _pg_test_id()
+        client = OpenAI(api_key=settings.openai_api_key)
+        response = client.images.generate(
+            model="dall-e-3", prompt=prompt[:4000],
+            size=size, quality=quality, n=1,
+        )
+        image_url = response.data[0].url
+        img_data = req.get(image_url, timeout=60)
+        img_data.raise_for_status()
+
+        img = Image.open(BytesIO(img_data.content)).convert("RGB")
+        fname = f"dalle_{tid}.png"
+        out_path = PLAYGROUND_DIR / fname
+        img.save(str(out_path), "PNG", optimize=True)
+
+        cost = 0.12 if quality == "hd" else 0.08
+        _pg_save_meta(tid, "dall-e", "image", prompt, str(out_path), cost,
+                      {"size": size, "quality": quality})
+
+        return JSONResponse({
+            "id": tid,
+            "image_url": _file_to_media_url(str(out_path)),
+            "cost": cost,
+            "size": size,
+            "quality": quality,
+        })
+    except Exception as exc:
+        _pg_log.exception("Playground DALL-E failed")
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.post("/api/playground/midjourney")
+async def api_playground_midjourney(request: Request):
+    """Test Midjourney image generation via GoAPI proxy."""
+    try:
+        body = await request.json()
+        prompt = (body.get("prompt") or "").strip()
+        if not prompt:
+            return JSONResponse({"error": "Prompt is required"}, status_code=400)
+        if not settings.midjourney_api_key:
+            return JSONResponse({"error": "Midjourney API key not configured"}, status_code=400)
+
+        from pipeline.image_generator import _generate_midjourney_image
+        tid = _pg_test_id()
+        fname = f"mj_{tid}.png"
+        out_path = PLAYGROUND_DIR / fname
+        _generate_midjourney_image(prompt, out_path)
+
+        _pg_save_meta(tid, "midjourney", "image", prompt, str(out_path), 0.05)
+
+        return JSONResponse({
+            "id": tid,
+            "image_url": _file_to_media_url(str(out_path)),
+            "cost": 0.05,
+        })
+    except Exception as exc:
+        _pg_log.exception("Playground Midjourney failed")
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.post("/api/playground/video")
+async def api_playground_video(request: Request):
+    """Test any video provider (kling, minimax, runway) with a custom prompt."""
+    try:
+        body = await request.json()
+        prompt = (body.get("prompt") or "").strip()
+        provider = (body.get("provider") or "").strip().lower()
+        duration = int(body.get("duration", 5))
+        if not prompt:
+            return JSONResponse({"error": "Prompt is required"}, status_code=400)
+        if provider not in ("kling", "minimax", "runway"):
+            return JSONResponse({"error": "provider must be kling, minimax, or runway"}, status_code=400)
+
+        from pipeline.video_generator import VideoGenerator, ProviderError
+        gen = VideoGenerator()
+        prov = gen.providers.get(provider)
+        if not prov or not prov.is_enabled():
+            return JSONResponse({"error": f"{provider} is not enabled or configured"}, status_code=400)
+
+        tid = _pg_test_id()
+        fname = f"{provider}_{tid}.mp4"
+        out_path = PLAYGROUND_DIR / fname
+        prov.generate_clip(prompt=prompt, output_path=out_path, duration_seconds=duration)
+
+        cost = 0.0
+        if provider == "minimax":
+            cost = settings.minimax_unit_price
+        elif provider == "kling":
+            from pipeline.cost_tracker import PRICING
+            kling_model = settings.kling_model
+            mode = "professional" if "pro" in kling_model.lower() else "standard"
+            cost = PRICING["kling"].get(f"{mode}_{duration}s", 0.14)
+        elif provider == "runway":
+            cost = duration * 0.05
+
+        file_size_mb = out_path.stat().st_size / (1024 * 1024) if out_path.exists() else 0
+
+        _pg_save_meta(tid, provider, "video", prompt, str(out_path), cost,
+                      {"duration": duration, "file_size_mb": round(file_size_mb, 2)})
+
+        return JSONResponse({
+            "id": tid,
+            "video_url": _file_to_media_url(str(out_path)),
+            "cost": cost,
+            "provider": provider,
+            "duration": duration,
+            "file_size_mb": round(file_size_mb, 2),
+        })
+    except Exception as exc:
+        _pg_log.exception("Playground video generation failed")
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.post("/api/playground/elevenlabs")
+async def api_playground_elevenlabs(request: Request):
+    """Test ElevenLabs text-to-speech with custom voice/settings."""
+    try:
+        body = await request.json()
+        text = (body.get("text") or "").strip()
+        voice_id = (body.get("voice_id") or "").strip()
+        stability = float(body.get("stability", 0.4))
+        similarity = float(body.get("similarity", 0.75))
+        if not text:
+            return JSONResponse({"error": "Text is required"}, status_code=400)
+
+        api_key = os.environ.get("ELEVENLABS_API_KEY", "").strip()
+        vid = voice_id or os.environ.get("ELEVENLABS_VOICE_ID", "").strip()
+        if not api_key or not vid:
+            return JSONResponse({"error": "ElevenLabs not configured"}, status_code=400)
+
+        import requests as req
+        tid = _pg_test_id()
+        model_id = os.environ.get("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2").strip()
+        resp = req.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{vid}",
+            headers={"xi-api-key": api_key, "Accept": "audio/mpeg", "Content-Type": "application/json"},
+            json={
+                "text": text[:1000],
+                "model_id": model_id,
+                "voice_settings": {"stability": stability, "similarity_boost": similarity},
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+
+        fname = f"voice_{tid}.mp3"
+        out_path = PLAYGROUND_DIR / fname
+        out_path.write_bytes(resp.content)
+
+        char_count = len(text[:1000])
+        cost = round(char_count * 0.00003, 4)
+
+        _pg_save_meta(tid, "elevenlabs", "audio", text[:1000], str(out_path), cost,
+                      {"voice_id": vid, "stability": stability, "similarity": similarity,
+                       "characters": char_count, "size_kb": len(resp.content) // 1024})
+
+        return JSONResponse({
+            "id": tid,
+            "audio_url": _file_to_media_url(str(out_path)),
+            "cost": cost,
+            "size_kb": len(resp.content) // 1024,
+            "characters": char_count,
+        })
+    except Exception as exc:
+        _pg_log.exception("Playground ElevenLabs failed")
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.post("/api/playground/gpt")
+async def api_playground_gpt(request: Request):
+    """Test GPT-4o text generation with custom system/user prompts."""
+    try:
+        body = await request.json()
+        system = (body.get("system") or "").strip()
+        user = (body.get("user") or "").strip()
+        model = body.get("model", "gpt-4o")
+        max_tokens = int(body.get("max_tokens", 1000))
+        temperature = float(body.get("temperature", 0.8))
+        if not user:
+            return JSONResponse({"error": "User prompt is required"}, status_code=400)
+        if not settings.openai_api_key:
+            return JSONResponse({"error": "OpenAI API key not configured"}, status_code=400)
+
+        from openai import OpenAI
+        tid = _pg_test_id()
+        client = OpenAI(api_key=settings.openai_api_key)
+
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": user})
+
+        response = client.chat.completions.create(
+            model=model, messages=messages,
+            max_tokens=max_tokens, temperature=temperature,
+        )
+        text = response.choices[0].message.content
+        usage = response.usage
+
+        prompt_cost = (usage.prompt_tokens / 1_000_000) * (2.50 if model == "gpt-4o" else 0.15)
+        completion_cost = (usage.completion_tokens / 1_000_000) * (10.00 if model == "gpt-4o" else 0.60)
+        cost = round(prompt_cost + completion_cost, 6)
+
+        # Save GPT output to a text file for browsing
+        txt_path = PLAYGROUND_DIR / f"gpt_{tid}.txt"
+        txt_path.write_text(text, encoding="utf-8")
+        _pg_save_meta(tid, "gpt", "text", user, str(txt_path), cost,
+                      {"system_prompt": system, "model": model, "temperature": temperature,
+                       "usage": {"prompt_tokens": usage.prompt_tokens,
+                                 "completion_tokens": usage.completion_tokens,
+                                 "total_tokens": usage.total_tokens},
+                       "output_text": text[:2000]})
+
+        return JSONResponse({
+            "id": tid,
+            "text": text,
+            "cost": cost,
+            "model": model,
+            "usage": {
+                "prompt_tokens": usage.prompt_tokens,
+                "completion_tokens": usage.completion_tokens,
+                "total_tokens": usage.total_tokens,
+            },
+        })
+    except Exception as exc:
+        _pg_log.exception("Playground GPT failed")
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.post("/api/playground/kenburns")
+async def api_playground_kenburns(request: Request):
+    """Test Ken Burns pan/zoom effect on an uploaded image."""
+    try:
+        form = await request.form()
+        image_file = form.get("image")
+        effect = form.get("effect", "zoom_in")
+        duration = int(form.get("duration", 5))
+
+        if not image_file or not hasattr(image_file, "read"):
+            return JSONResponse({"error": "Image file is required"}, status_code=400)
+
+        tid = _pg_test_id()
+        img_bytes = await image_file.read()
+        img_path = PLAYGROUND_DIR / f"kb_input_{tid}.png"
+        img_path.write_bytes(img_bytes)
+
+        video_path = PLAYGROUND_DIR / f"kb_output_{tid}.mp4"
+
+        from pipeline.video_generator import apply_ken_burns
+        apply_ken_burns(
+            image_path=img_path,
+            output_path=video_path,
+            effect=effect,
+            duration_seconds=duration,
+        )
+
+        file_size_mb = video_path.stat().st_size / (1024 * 1024) if video_path.exists() else 0
+
+        _pg_save_meta(tid, "kenburns", "video", f"Ken Burns {effect} ({duration}s)",
+                      str(video_path), 0,
+                      {"effect": effect, "duration": duration,
+                       "file_size_mb": round(file_size_mb, 2),
+                       "input_image": str(img_path)})
+
+        return JSONResponse({
+            "id": tid,
+            "video_url": _file_to_media_url(str(video_path)),
+            "cost": 0,
+            "effect": effect,
+            "duration": duration,
+            "file_size_mb": round(file_size_mb, 2),
+        })
+    except Exception as exc:
+        _pg_log.exception("Playground Ken Burns failed")
+        return JSONResponse({"error": str(exc)}, status_code=500)

@@ -1,4 +1,4 @@
-"""YouTube Data API v3 video uploader."""
+"""YouTube Data API v3 video uploader with playlist and chapter support."""
 
 from __future__ import annotations
 
@@ -6,11 +6,12 @@ import logging
 import os
 from pathlib import Path
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from config.settings import get_settings
 from database.connection import log_job_step, log_job_step_isolated
-from database.models import Episode, EpisodeSEO, EpisodeStatus, Short, StepStatus
+from database.models import Episode, EpisodeSEO, EpisodeStatus, Scene, Short, StepStatus
 
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ class YouTubeUploader:
         self.client_secret_path = os.getenv("YOUTUBE_CLIENT_SECRET_PATH", "")
         self.credentials_path = os.getenv("YOUTUBE_CREDENTIALS_PATH", "youtube_credentials.json")
         self.privacy = os.getenv("YOUTUBE_UPLOAD_PRIVACY", "unlisted")
+        self.playlist_name = os.getenv("YOUTUBE_PLAYLIST_NAME", "Spartacus Arena Season 1")
         self._service = None
 
     def _ensure_service(self):
@@ -40,26 +42,119 @@ class YouTubeUploader:
                 "YouTube upload requires: pip install google-api-python-client google-auth-oauthlib"
             ) from exc
 
+        SCOPES = [
+            "https://www.googleapis.com/auth/youtube.upload",
+            "https://www.googleapis.com/auth/youtube",
+        ]
+
         creds = None
         creds_file = Path(self.credentials_path)
         if creds_file.exists():
-            creds = Credentials.from_authorized_user_file(str(creds_file))
+            creds = Credentials.from_authorized_user_file(str(creds_file), SCOPES)
+
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                from google.auth.transport.requests import Request as AuthRequest
+                creds.refresh(AuthRequest())
+                creds_file.write_text(creds.to_json())
+                logger.info("YouTube credentials refreshed successfully.")
+            except Exception as refresh_exc:
+                logger.warning("Credential refresh failed (%s), re-authenticating.", refresh_exc)
+                creds = None
 
         if not creds or not creds.valid:
             if not self.client_secret_path or not Path(self.client_secret_path).exists():
                 raise RuntimeError(
                     f"YouTube client secret not found at '{self.client_secret_path}'. "
-                    "Set YOUTUBE_CLIENT_SECRET_PATH in .env."
+                    "Set YOUTUBE_CLIENT_SECRET_PATH in .env and download it from "
+                    "Google Cloud Console > APIs & Credentials > OAuth 2.0 Client IDs."
                 )
             flow = InstalledAppFlow.from_client_secrets_file(
                 self.client_secret_path,
-                scopes=["https://www.googleapis.com/auth/youtube.upload"],
+                scopes=SCOPES,
             )
             creds = flow.run_local_server(port=0)
             creds_file.write_text(creds.to_json())
+            logger.info("YouTube credentials saved to %s", creds_file)
 
         self._service = build("youtube", "v3", credentials=creds)
         return self._service
+
+    def _get_or_create_playlist(self) -> str | None:
+        """Find existing playlist or create one. Returns playlist ID."""
+        try:
+            service = self._ensure_service()
+            response = service.playlists().list(part="snippet", mine=True, maxResults=50).execute()
+            for item in response.get("items", []):
+                if item["snippet"]["title"] == self.playlist_name:
+                    return item["id"]
+
+            body = {
+                "snippet": {
+                    "title": self.playlist_name,
+                    "description": "AI-generated Spartacus gladiator arena episodes. New episode every day.",
+                },
+                "status": {"privacyStatus": self.privacy},
+            }
+            result = service.playlists().insert(part="snippet,status", body=body).execute()
+            logger.info("Created playlist '%s' (%s)", self.playlist_name, result["id"])
+            return result["id"]
+        except Exception:
+            logger.warning("Could not get/create playlist, skipping playlist add.")
+            return None
+
+    def _add_to_playlist(self, video_id: str, playlist_id: str) -> None:
+        """Add a video to a playlist."""
+        try:
+            service = self._ensure_service()
+            service.playlistItems().insert(
+                part="snippet",
+                body={
+                    "snippet": {
+                        "playlistId": playlist_id,
+                        "resourceId": {"kind": "youtube#video", "videoId": video_id},
+                    }
+                },
+            ).execute()
+            logger.info("Added video %s to playlist %s", video_id, playlist_id)
+        except Exception:
+            logger.warning("Failed to add video %s to playlist %s", video_id, playlist_id)
+
+    def _build_chapters_description(self, session: Session, episode: Episode, base_description: str) -> str:
+        """Auto-generate YouTube chapters/timestamps from scene data."""
+        scenes = list(
+            session.execute(
+                select(Scene).where(Scene.episode_id == episode.id).order_by(Scene.scene_order.asc())
+            ).scalars()
+        )
+        if not scenes:
+            return base_description
+
+        chapters: list[str] = ["0:00 Intro"]
+        scene_type_labels = {
+            "intro": "Introduction",
+            "fight1": "First Battle",
+            "fight2": "Second Battle",
+            "climax": "The Climax",
+            "outro": "Aftermath",
+        }
+
+        offset_seconds = 5
+        for scene in scenes:
+            if scene.audio_file_path and Path(scene.audio_file_path).exists():
+                from pipeline.video_generator import _probe_duration
+                dur = _probe_duration(Path(scene.audio_file_path))
+            else:
+                dur = settings.default_scene_duration_seconds
+
+            label = scene_type_labels.get(scene.scene_type.value, f"Scene {scene.scene_order}")
+            minutes = int(offset_seconds // 60)
+            secs = int(offset_seconds % 60)
+            chapters.append(f"{minutes}:{secs:02d} {label}")
+            offset_seconds += dur
+
+        chapters_text = "\n".join(chapters)
+        return f"{base_description}\n\n📋 Chapters:\n{chapters_text}"
 
     def upload_video(
         self,
@@ -70,7 +165,7 @@ class YouTubeUploader:
         thumbnail_path: Path | None = None,
         seo: EpisodeSEO | None = None,
     ) -> str:
-        """Upload video to YouTube and update episode record."""
+        """Upload video to YouTube with playlist, chapters, and thumbnail."""
         try:
             from googleapiclient.http import MediaFileUpload
         except ImportError as exc:
@@ -89,6 +184,8 @@ class YouTubeUploader:
                     "This video was created using AI-generated narration and visuals. "
                     "All characters and events are fictional.\n\n" + description
                 )
+
+            description = self._build_chapters_description(session, episode, description)
 
             body = {
                 "snippet": {
@@ -122,6 +219,10 @@ class YouTubeUploader:
                 except Exception:
                     logger.warning("Failed to set thumbnail for video %s", video_id)
 
+            playlist_id = self._get_or_create_playlist()
+            if playlist_id:
+                self._add_to_playlist(video_id, playlist_id)
+
             episode.youtube_video_id = video_id
             episode.youtube_url = youtube_url
             episode.status = EpisodeStatus.UPLOADED
@@ -130,7 +231,7 @@ class YouTubeUploader:
 
             log_job_step(
                 session, job_id, "youtube_upload", StepStatus.SUCCESS,
-                f"Uploaded: {youtube_url}",
+                f"Uploaded: {youtube_url} (playlist: {playlist_id or 'none'})",
             )
             return video_id
         except Exception as exc:

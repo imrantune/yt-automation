@@ -1,9 +1,9 @@
 alembic>=1.13,<2
 celery>=5.4,<6
 click>=8.1,<9
-diffusers>=0.30,<1
 fastapi>=0.110,<1
 google-api-python-client>=2.100,<3
+google-auth>=2.25,<3
 google-auth-oauthlib>=1.2,<2
 jinja2>=3.1,<4
 openai>=1.30,<3
@@ -14,6 +14,10 @@ python-multipart>=0.0.9,<1
 redis>=5.0,<8
 requests>=2.31,<3
 sqlalchemy>=2.0,<2.1
-torch>=2.3
-transformers>=4.40,<6
 uvicorn>=0.29,<1
+
+# Optional: local Wan 2.1 video generation (large download ~5GB+)
+# Uncomment if using WAN21_ENABLED=true
+# torch>=2.3
+# diffusers>=0.30,<1
+# transformers>=4.40,<6

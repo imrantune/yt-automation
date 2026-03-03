@@ -26,8 +26,24 @@
                 {% endif %}
             </div>
             <div class="flex items-center justify-between">
+                <span class="text-gray-300">Midjourney</span>
+                {% if settings.midjourney_api_key %}
+                <span class="px-2 py-0.5 rounded text-xs bg-green-900 text-green-300">Configured</span>
+                {% else %}
+                <span class="px-2 py-0.5 rounded text-xs bg-yellow-900 text-yellow-300">Not Set</span>
+                {% endif %}
+            </div>
+            <div class="flex items-center justify-between">
                 <span class="text-gray-300">Minimax</span>
                 {% if settings.minimax_api_key %}
+                <span class="px-2 py-0.5 rounded text-xs bg-green-900 text-green-300">Configured</span>
+                {% else %}
+                <span class="px-2 py-0.5 rounded text-xs bg-yellow-900 text-yellow-300">Not Set</span>
+                {% endif %}
+            </div>
+            <div class="flex items-center justify-between">
+                <span class="text-gray-300">Kling AI</span>
+                {% if settings.kling_api_key %}
                 <span class="px-2 py-0.5 rounded text-xs bg-green-900 text-green-300">Configured</span>
                 {% else %}
                 <span class="px-2 py-0.5 rounded text-xs bg-yellow-900 text-yellow-300">Not Set</span>
@@ -44,22 +60,95 @@
         </div>
     </div>
 
+    <!-- Image Provider Toggle -->
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <h3 class="text-sm font-semibold text-gray-400 uppercase mb-4">Image Provider</h3>
+        <p class="text-xs text-gray-500 mb-4">Choose which AI generates scene images for the hybrid video pipeline.</p>
+
+        <div class="space-y-3" id="imageProviderOptions">
+            <label class="flex items-center gap-3 bg-gray-800 border rounded-lg px-4 py-3 cursor-pointer transition-all hover:border-arena-500 {% if settings.image_provider == 'dall-e' %}border-arena-500 ring-1 ring-arena-500/30{% else %}border-gray-700{% endif %}"
+                   data-provider="dall-e" onclick="selectImageProvider('dall-e')">
+                <input type="radio" name="image_provider" value="dall-e" class="hidden" {% if settings.image_provider == 'dall-e' %}checked{% endif %}>
+                <div class="w-4 h-4 rounded-full border-2 flex items-center justify-center {% if settings.image_provider == 'dall-e' %}border-arena-400{% else %}border-gray-600{% endif %}">
+                    <div class="w-2 h-2 rounded-full {% if settings.image_provider == 'dall-e' %}bg-arena-400{% else %}bg-transparent{% endif %}"></div>
+                </div>
+                <div class="flex-1">
+                    <div class="text-sm font-medium text-gray-200">DALL-E 3</div>
+                    <div class="text-xs text-gray-500">OpenAI · $0.12/image HD · 1792×1024 · Fast (~10s)</div>
+                </div>
+                {% if settings.openai_api_key %}
+                <span class="px-2 py-0.5 rounded text-xs bg-green-900/50 text-green-400">Ready</span>
+                {% else %}
+                <span class="px-2 py-0.5 rounded text-xs bg-red-900/50 text-red-400">No Key</span>
+                {% endif %}
+            </label>
+
+            <label class="flex items-center gap-3 bg-gray-800 border rounded-lg px-4 py-3 cursor-pointer transition-all hover:border-arena-500 {% if settings.image_provider == 'midjourney' %}border-arena-500 ring-1 ring-arena-500/30{% else %}border-gray-700{% endif %}"
+                   data-provider="midjourney" onclick="selectImageProvider('midjourney')">
+                <input type="radio" name="image_provider" value="midjourney" class="hidden" {% if settings.image_provider == 'midjourney' %}checked{% endif %}>
+                <div class="w-4 h-4 rounded-full border-2 flex items-center justify-center {% if settings.image_provider == 'midjourney' %}border-arena-400{% else %}border-gray-600{% endif %}">
+                    <div class="w-2 h-2 rounded-full {% if settings.image_provider == 'midjourney' %}bg-arena-400{% else %}bg-transparent{% endif %}"></div>
+                </div>
+                <div class="flex-1">
+                    <div class="text-sm font-medium text-gray-200">Midjourney v6.1</div>
+                    <div class="text-xs text-gray-500">Proxy API · ~$0.05/image · 16:9 · Stylized (~30-60s)</div>
+                </div>
+                {% if settings.midjourney_api_key %}
+                <span class="px-2 py-0.5 rounded text-xs bg-green-900/50 text-green-400">Ready</span>
+                {% else %}
+                <span class="px-2 py-0.5 rounded text-xs bg-red-900/50 text-red-400">No Key</span>
+                {% endif %}
+            </label>
+        </div>
+
+        <div class="mt-3 flex items-center gap-3">
+            <span id="imageProviderStatus" class="text-xs text-gray-500"></span>
+        </div>
+
+        <hr class="border-gray-700 my-4">
+        <div class="space-y-2 text-sm">
+            <h4 class="text-xs font-semibold text-gray-500 uppercase">Cost Comparison (per 5-scene episode)</h4>
+            <div class="flex items-center justify-between">
+                <span class="text-gray-400">DALL-E 3 (HD)</span>
+                <span class="text-gray-300 font-mono">$0.60</span>
+            </div>
+            <div class="flex items-center justify-between">
+                <span class="text-gray-400">Midjourney v6.1</span>
+                <span class="text-green-400 font-mono">$0.25</span>
+            </div>
+        </div>
+    </div>
+
     <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
         <h3 class="text-sm font-semibold text-gray-400 uppercase mb-4">Video Providers</h3>
         <p class="text-xs text-gray-500 mb-3">Drag to reorder. Pipeline tries providers top-to-bottom.</p>
+        {% set all_providers = ['hybrid', 'minimax', 'kling', 'wan21', 'runway'] %}
+        {% set ordered = settings.video_provider_order | list %}
+        {% set missing = [] %}
+        {% for ap in all_providers %}{% if ap not in ordered %}{% if missing.append(ap) %}{% endif %}{% endif %}{% endfor %}
+        {% set full_list = ordered + missing %}
         <ul id="providerList" class="space-y-2 mb-4">
-            {% for p in settings.video_provider_order %}
+            {% for p in full_list %}
             <li draggable="true" data-provider="{{ p }}"
                 class="provider-item flex items-center gap-3 bg-gray-800 border border-gray-700 rounded-lg px-4 py-2.5 cursor-grab active:cursor-grabbing select-none transition-all duration-150 hover:border-arena-500">
                 <svg class="w-4 h-4 text-gray-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16"/>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8h16M4 16h16" />
                 </svg>
                 <span class="flex-1 text-sm font-medium text-gray-200">
-                    {% if p == 'wan21' %}Wan 2.1{% elif p == 'minimax' %}Minimax{% elif p == 'runway' %}Runway{% else %}{{ p }}{% endif %}
+                    {% if p == 'hybrid' %}Hybrid ({{ 'Midjourney' if settings.image_provider == 'midjourney' else 'DALL-E' }} + Ken Burns){% elif p == 'kling' %}Kling AI{% elif p == 'wan21' %}Wan 2.1{% elif p == 'minimax' %}Minimax{% elif p == 'runway' %}Runway{% else %}{{ p }}{% endif %}
                 </span>
-                {% if p == 'wan21' %}
+                {% if p == 'hybrid' %}
+                {% set hybrid_ready = (settings.image_provider == 'midjourney' and settings.midjourney_api_key) or (settings.image_provider != 'midjourney' and settings.openai_api_key) %}
+                <span class="text-xs px-1.5 py-0.5 rounded {% if hybrid_ready %}bg-green-900/50 text-green-400{% else %}bg-red-900/50 text-red-400{% endif %}">
+                    {{ 'On' if hybrid_ready else 'Off' }}
+                </span>
+                {% elif p == 'wan21' %}
                 <span class="text-xs px-1.5 py-0.5 rounded {% if settings.wan21_enabled %}bg-green-900/50 text-green-400{% else %}bg-red-900/50 text-red-400{% endif %}">
                     {{ 'On' if settings.wan21_enabled else 'Off' }}
+                </span>
+                {% elif p == 'kling' %}
+                <span class="text-xs px-1.5 py-0.5 rounded {% if settings.kling_enabled and settings.kling_api_key %}bg-green-900/50 text-green-400{% else %}bg-red-900/50 text-red-400{% endif %}">
+                    {{ 'On' if settings.kling_enabled and settings.kling_api_key else 'Off' }}
                 </span>
                 {% elif p == 'minimax' %}
                 <span class="text-xs px-1.5 py-0.5 rounded {% if settings.minimax_enabled %}bg-green-900/50 text-green-400{% else %}bg-red-900/50 text-red-400{% endif %}">
@@ -70,13 +159,14 @@
                     {{ 'On' if settings.runway_enabled else 'Off' }}
                 </span>
                 {% endif %}
-                <span class="text-xs font-mono text-gray-500">#<span class="provider-rank">{{ loop.index }}</span></span>
+                <span class="text-xs font-mono text-gray-500">#<span class="provider-rank">{{ loop.index
+                        }}</span></span>
             </li>
             {% endfor %}
         </ul>
         <div class="flex items-center gap-3">
             <button id="saveOrderBtn" onclick="saveProviderOrder()" disabled
-                    class="px-4 py-1.5 bg-arena-600 hover:bg-arena-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-xs font-semibold rounded-lg transition-colors">
+                class="px-4 py-1.5 bg-arena-600 hover:bg-arena-500 disabled:bg-gray-700 disabled:text-gray-500 text-white text-xs font-semibold rounded-lg transition-colors">
                 Save Order
             </button>
             <span id="orderStatus" class="text-xs text-gray-500"></span>
@@ -95,30 +185,46 @@
                 <span class="text-gray-300">Minimax Unit Price</span>
                 <span class="text-gray-400">${{ settings.minimax_unit_price }}/unit</span>
             </div>
+            <div class="flex items-center justify-between">
+                <span class="text-gray-300">Kling Model</span>
+                <span class="text-gray-400 text-xs">{{ settings.kling_model }}</span>
+            </div>
         </div>
     </div>
 
     <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
         <h3 class="text-sm font-semibold text-gray-400 uppercase mb-4">Video Settings</h3>
         <div class="space-y-2 text-sm">
-            <div class="flex justify-between"><span class="text-gray-500">Resolution</span><span class="text-gray-300">{{ settings.video_resolution }}</span></div>
-            <div class="flex justify-between"><span class="text-gray-500">FPS</span><span class="text-gray-300">{{ settings.video_fps }}</span></div>
-            <div class="flex justify-between"><span class="text-gray-500">Video Codec</span><span class="text-gray-300">{{ settings.video_codec }}</span></div>
-            <div class="flex justify-between"><span class="text-gray-500">Video Bitrate</span><span class="text-gray-300">{{ settings.video_bitrate }}</span></div>
-            <div class="flex justify-between"><span class="text-gray-500">Audio Codec</span><span class="text-gray-300">{{ settings.audio_codec }}</span></div>
-            <div class="flex justify-between"><span class="text-gray-500">Audio Bitrate</span><span class="text-gray-300">{{ settings.audio_bitrate }}</span></div>
-            <div class="flex justify-between"><span class="text-gray-500">Scene Duration</span><span class="text-gray-300">{{ settings.default_scene_duration_seconds }}s</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Resolution</span><span
+                    class="text-gray-300">{{ settings.video_resolution }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">FPS</span><span class="text-gray-300">{{
+                    settings.video_fps }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Video Codec</span><span
+                    class="text-gray-300">{{ settings.video_codec }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Video Bitrate</span><span
+                    class="text-gray-300">{{ settings.video_bitrate }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Audio Codec</span><span
+                    class="text-gray-300">{{ settings.audio_codec }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Audio Bitrate</span><span
+                    class="text-gray-300">{{ settings.audio_bitrate }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Scene Duration</span><span
+                    class="text-gray-300">{{ settings.default_scene_duration_seconds }}s</span></div>
         </div>
     </div>
 
     <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
         <h3 class="text-sm font-semibold text-gray-400 uppercase mb-4">Output Paths</h3>
         <div class="space-y-2 text-sm">
-            <div class="flex justify-between"><span class="text-gray-500">Root</span><span class="text-gray-400 text-xs">{{ settings.output_root }}</span></div>
-            <div class="flex justify-between"><span class="text-gray-500">Scripts</span><span class="text-gray-400 text-xs">{{ settings.scripts_dir }}</span></div>
-            <div class="flex justify-between"><span class="text-gray-500">Audio</span><span class="text-gray-400 text-xs">{{ settings.audio_dir }}</span></div>
-            <div class="flex justify-between"><span class="text-gray-500">Clips</span><span class="text-gray-400 text-xs">{{ settings.clips_dir }}</span></div>
-            <div class="flex justify-between"><span class="text-gray-500">Final</span><span class="text-gray-400 text-xs">{{ settings.final_dir }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Root</span><span
+                    class="text-gray-400 text-xs">{{ settings.output_root }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Scripts</span><span
+                    class="text-gray-400 text-xs">{{ settings.scripts_dir }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Audio</span><span
+                    class="text-gray-400 text-xs">{{ settings.audio_dir }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Clips</span><span
+                    class="text-gray-400 text-xs">{{ settings.clips_dir }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">Final</span><span
+                    class="text-gray-400 text-xs">{{ settings.final_dir }}</span></div>
         </div>
     </div>
 </div>
@@ -126,86 +232,138 @@
 
 {% block scripts %}
 <style>
-.provider-item.drag-over { border-color: #d97706; background: rgba(217,119,6,0.08); }
-.provider-item.dragging  { opacity: 0.4; }
+    .provider-item.drag-over {
+        border-color: #d97706;
+        background: rgba(217, 119, 6, 0.08);
+    }
+
+    .provider-item.dragging {
+        opacity: 0.4;
+    }
 </style>
 <script>
-(function() {
-    const list = document.getElementById('providerList');
-    const btn  = document.getElementById('saveOrderBtn');
-    const stat = document.getElementById('orderStatus');
-    const orig = getOrder();
-    let dragEl = null;
+    (function () {
+        const list = document.getElementById('providerList');
+        const btn = document.getElementById('saveOrderBtn');
+        const stat = document.getElementById('orderStatus');
+        const orig = getOrder();
+        let dragEl = null;
 
-    function getOrder() {
-        return [...list.querySelectorAll('li')].map(li => li.dataset.provider);
-    }
-    function updateRanks() {
-        list.querySelectorAll('.provider-rank').forEach((el, i) => el.textContent = i + 1);
-        const changed = JSON.stringify(getOrder()) !== JSON.stringify(orig);
-        btn.disabled = !changed;
-        stat.textContent = changed ? 'Unsaved changes' : '';
-        stat.className = 'text-xs ' + (changed ? 'text-yellow-400' : 'text-gray-500');
-    }
-
-    list.addEventListener('dragstart', e => {
-        dragEl = e.target.closest('li');
-        if (dragEl) dragEl.classList.add('dragging');
-    });
-    list.addEventListener('dragend', () => {
-        if (dragEl) dragEl.classList.remove('dragging');
-        list.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
-        dragEl = null;
-        updateRanks();
-    });
-    list.addEventListener('dragover', e => {
-        e.preventDefault();
-        const target = e.target.closest('li');
-        if (!target || target === dragEl) return;
-        list.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
-        target.classList.add('drag-over');
-        const rect = target.getBoundingClientRect();
-        const mid  = rect.top + rect.height / 2;
-        if (e.clientY < mid) {
-            list.insertBefore(dragEl, target);
-        } else {
-            list.insertBefore(dragEl, target.nextSibling);
+        function getOrder() {
+            return [...list.querySelectorAll('li')].map(li => li.dataset.provider);
         }
-    });
-    list.addEventListener('drop', e => {
-        e.preventDefault();
-        list.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
-    });
+        function updateRanks() {
+            list.querySelectorAll('.provider-rank').forEach((el, i) => el.textContent = i + 1);
+            const changed = JSON.stringify(getOrder()) !== JSON.stringify(orig);
+            btn.disabled = !changed;
+            stat.textContent = changed ? 'Unsaved changes' : '';
+            stat.className = 'text-xs ' + (changed ? 'text-yellow-400' : 'text-gray-500');
+        }
 
-    window.saveProviderOrder = async function() {
-        const order = getOrder();
-        btn.disabled = true;
-        stat.textContent = 'Saving...';
-        stat.className = 'text-xs text-blue-400';
-        try {
-            const res = await fetch('/api/settings/provider-order', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ order }),
-            });
-            const data = await res.json();
-            if (res.ok) {
-                stat.textContent = '✓ ' + data.message;
-                stat.className = 'text-xs text-green-400';
-                orig.length = 0;
-                orig.push(...data.provider_order);
-                setTimeout(() => { stat.textContent = ''; stat.className = 'text-xs text-gray-500'; }, 3000);
+        list.addEventListener('dragstart', e => {
+            dragEl = e.target.closest('li');
+            if (dragEl) dragEl.classList.add('dragging');
+        });
+        list.addEventListener('dragend', () => {
+            if (dragEl) dragEl.classList.remove('dragging');
+            list.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+            dragEl = null;
+            updateRanks();
+        });
+        list.addEventListener('dragover', e => {
+            e.preventDefault();
+            const target = e.target.closest('li');
+            if (!target || target === dragEl) return;
+            list.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+            target.classList.add('drag-over');
+            const rect = target.getBoundingClientRect();
+            const mid = rect.top + rect.height / 2;
+            if (e.clientY < mid) {
+                list.insertBefore(dragEl, target);
             } else {
-                stat.textContent = '✗ ' + (data.error || 'Failed');
+                list.insertBefore(dragEl, target.nextSibling);
+            }
+        });
+        list.addEventListener('drop', e => {
+            e.preventDefault();
+            list.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+        });
+
+        window.selectImageProvider = async function (provider) {
+            const options = document.querySelectorAll('#imageProviderOptions label');
+            const status = document.getElementById('imageProviderStatus');
+
+            options.forEach(label => {
+                const isSelected = label.dataset.provider === provider;
+                label.classList.toggle('border-arena-500', isSelected);
+                label.classList.toggle('ring-1', isSelected);
+                label.classList.toggle('ring-arena-500/30', isSelected);
+                label.classList.toggle('border-gray-700', !isSelected);
+                const dot = label.querySelector('.w-2.h-2');
+                const ring = label.querySelector('.w-4.h-4');
+                if (dot) {
+                    dot.classList.toggle('bg-arena-400', isSelected);
+                    dot.classList.toggle('bg-transparent', !isSelected);
+                }
+                if (ring) {
+                    ring.classList.toggle('border-arena-400', isSelected);
+                    ring.classList.toggle('border-gray-600', !isSelected);
+                }
+            });
+
+            status.textContent = 'Saving...';
+            status.className = 'text-xs text-blue-400';
+
+            try {
+                const res = await fetch('/api/settings/image-provider', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ provider }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    status.textContent = '✓ Image provider set to ' + data.image_provider;
+                    status.className = 'text-xs text-green-400';
+                    setTimeout(() => { status.textContent = ''; status.className = 'text-xs text-gray-500'; }, 3000);
+                } else {
+                    status.textContent = '✗ ' + (data.error || 'Failed');
+                    status.className = 'text-xs text-red-400';
+                }
+            } catch (err) {
+                status.textContent = '✗ ' + err.message;
+                status.className = 'text-xs text-red-400';
+            }
+        };
+
+        window.saveProviderOrder = async function () {
+            const order = getOrder();
+            btn.disabled = true;
+            stat.textContent = 'Saving...';
+            stat.className = 'text-xs text-blue-400';
+            try {
+                const res = await fetch('/api/settings/provider-order', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ order }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    stat.textContent = '✓ ' + data.message;
+                    stat.className = 'text-xs text-green-400';
+                    orig.length = 0;
+                    orig.push(...data.provider_order);
+                    setTimeout(() => { stat.textContent = ''; stat.className = 'text-xs text-gray-500'; }, 3000);
+                } else {
+                    stat.textContent = '✗ ' + (data.error || 'Failed');
+                    stat.className = 'text-xs text-red-400';
+                    btn.disabled = false;
+                }
+            } catch (err) {
+                stat.textContent = '✗ ' + err.message;
                 stat.className = 'text-xs text-red-400';
                 btn.disabled = false;
             }
-        } catch(err) {
-            stat.textContent = '✗ ' + err.message;
-            stat.className = 'text-xs text-red-400';
-            btn.disabled = false;
-        }
-    };
-})();
+        };
+    })();
 </script>
 {% endblock %}

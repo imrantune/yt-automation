@@ -46,13 +46,20 @@ class SubtitleGenerator:
 
     def _transcribe(self, audio_path: Path) -> list:
         """Transcribe audio file and return segments with timestamps."""
-        with open(audio_path, "rb") as f:
-            response = self.client.audio.transcriptions.create(
-                model="whisper-1",
-                file=f,
-                response_format="verbose_json",
-                timestamp_granularities=["segment"],
-            )
+        from pipeline.retry import retry_api_call
+
+        @retry_api_call(max_retries=3, base_delay=3.0)
+        def _call_whisper(client, path):
+            with open(path, "rb") as f:
+                resp = client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=f,
+                    response_format="verbose_json",
+                    timestamp_granularities=["segment"],
+                )
+            return resp
+
+        response = _call_whisper(self.client, audio_path)
         return response.segments or []
 
     def generate_episode_subtitles(self, session: Session, job_id: int, episode: Episode) -> list[Scene]:

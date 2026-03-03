@@ -16,7 +16,7 @@ load_dotenv(ENV_PATH if ENV_PATH.exists() else None)
 
 logger = logging.getLogger(__name__)
 
-VALID_PROVIDERS = {"wan21", "minimax", "runway"}
+VALID_PROVIDERS = {"hybrid", "wan21", "minimax", "runway", "kling"}
 
 
 def _to_bool(value: str | None, default: bool = False) -> bool:
@@ -59,6 +59,16 @@ class Settings:
     runway_api_key: str
     runway_api_base: str
     runway_enabled: bool
+
+    kling_api_key: str
+    kling_api_base: str
+    kling_enabled: bool
+    kling_model: str
+
+    midjourney_api_key: str
+    midjourney_api_base: str
+    midjourney_enabled: bool
+    image_provider: str  # "dall-e" or "midjourney"
 
     wan21_model_id: str
     wan21_device: str
@@ -134,6 +144,10 @@ class Settings:
             elevenlabs_api_key=elevenlabs_api_key,
             elevenlabs_voice_id=elevenlabs_voice_id,
             elevenlabs_model_id=os.getenv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2"),
+            midjourney_api_key=os.getenv("MIDJOURNEY_API_KEY", "").strip(),
+            midjourney_api_base=os.getenv("MIDJOURNEY_API_BASE", "https://api.goapi.ai").strip(),
+            midjourney_enabled=_to_bool(os.getenv("MIDJOURNEY_ENABLED"), default=False),
+            image_provider=os.getenv("IMAGE_PROVIDER", "dall-e").strip().lower(),
             minimax_api_key=os.getenv("MINIMAX_API_KEY", "").strip(),
             minimax_api_base=os.getenv("MINIMAX_API_BASE", "https://api.minimax.chat"),
             minimax_enabled=_to_bool(os.getenv("MINIMAX_ENABLED"), default=True),
@@ -141,6 +155,10 @@ class Settings:
             runway_api_key=os.getenv("RUNWAY_API_KEY", "").strip(),
             runway_api_base=os.getenv("RUNWAY_API_BASE", "https://api.dev.runwayml.com"),
             runway_enabled=_to_bool(os.getenv("RUNWAY_ENABLED"), default=True),
+            kling_api_key=os.getenv("KLING_API_KEY", "").strip(),
+            kling_api_base=os.getenv("KLING_API_BASE", "https://api.klingapi.com").strip(),
+            kling_enabled=_to_bool(os.getenv("KLING_ENABLED"), default=False),
+            kling_model=os.getenv("KLING_MODEL", "kling-v2.6-pro").strip(),
             wan21_model_id=os.getenv("WAN21_MODEL_ID", "Wan-AI/Wan2.1-T2V-1.3B"),
             wan21_device=os.getenv("WAN21_DEVICE", "mps"),
             wan21_enabled=_to_bool(os.getenv("WAN21_ENABLED"), default=True),

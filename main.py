@@ -20,6 +20,7 @@ from database.models import EpisodeStatus, JobStatus, StepStatus, VideoJob
 from pipeline.music import mix_episode_music
 from pipeline.script_generator import ScriptGenerator
 from pipeline.seo import SEOGenerator
+from pipeline.sfx import mix_episode_sfx
 from pipeline.shorts import ShortsGenerator
 from pipeline.subtitles import SubtitleGenerator
 from pipeline.thumbnail import ThumbnailGenerator
@@ -39,7 +40,12 @@ logger = logging.getLogger(__name__)
 
 
 def run_pipeline() -> None:
-    """Generate one full episode end-to-end with all Phase 2 enhancements."""
+    """Generate one full episode end-to-end with all Phase 2 enhancements.
+
+    Steps: Script → SEO → Voiceover → Subtitles → Video Clips →
+           Music Mix → FFmpeg Merge (with color grade + intro/outro) →
+           Thumbnail → Shorts → YouTube Upload
+    """
     missing = [k for k in _REQUIRED_API_KEYS if not getattr(settings, k, "")]
     if missing:
         raise ValueError(f"Missing required API keys: {', '.join(missing)}. Set them in .env before running.")
@@ -57,9 +63,13 @@ def run_pipeline() -> None:
         thumb_gen = ThumbnailGenerator()
         shorts_gen = ShortsGenerator()
 
-        job = create_video_job(session=session)
-        session.commit()
-        job_id = job.id
+        try:
+            job = create_video_job(session=session)
+            session.commit()
+            job_id = job.id
+        except Exception as job_exc:
+            session.rollback()
+            raise RuntimeError(f"Failed to create video job: {job_exc}") from job_exc
 
         # 1. Script generation
         generated_episode, _ = script_gen.generate_and_persist(session=session, job_id=job.id)
@@ -71,7 +81,7 @@ def run_pipeline() -> None:
         seo = seo_gen.generate_seo(session=session, job_id=job.id, episode=generated_episode)
         session.commit()
 
-        # 3. Voiceover
+        # 3. Voiceover (per-character voices)
         voice_gen.generate_episode_audio(
             session=session, job_id=job.id, episode=generated_episode,
         )
@@ -83,7 +93,7 @@ def run_pipeline() -> None:
         )
         session.commit()
 
-        # 5. Video clips
+        # 5. Video clips (Minimax default, with fallback)
         video_gen.generate_episode_clips(
             session=session, job_id=job.id, episode=generated_episode,
         )
@@ -91,11 +101,24 @@ def run_pipeline() -> None:
 
         # 6. Mix background music with narration audio
         scenes = list(generated_episode.scenes)
+        log_job_step(session, job.id, "music", StepStatus.STARTED, "Mixing background music per scene type.")
+        session.commit()
         mixed_audio_paths = mix_episode_music(generated_episode.episode_number, scenes)
+        log_job_step(session, job.id, "music", StepStatus.SUCCESS,
+                     f"Mixed music for {len(scenes)} scenes.")
+        session.commit()
 
-        # 7. FFmpeg merge (video + mixed audio + subtitles)
+        # 6b. Layer SFX (sword clashes, crowd roars, etc.) onto music+narration
+        log_job_step(session, job.id, "sfx", StepStatus.STARTED, "Layering SFX (sword clashes, crowd roars).")
+        session.commit()
+        mixed_audio_paths = mix_episode_sfx(generated_episode.episode_number, scenes, mixed_audio_paths)
+        log_job_step(session, job.id, "sfx", StepStatus.SUCCESS,
+                     f"SFX layered for {len(scenes)} scenes.")
+        session.commit()
+
+        # 7. FFmpeg merge (video + mixed audio + subtitles + color grade + intro/outro)
         set_episode_status(session, generated_episode, EpisodeStatus.EDITING)
-        log_job_step(session, job.id, "editing", StepStatus.STARTED, "Merging clips and audio with FFmpeg.")
+        log_job_step(session, job.id, "editing", StepStatus.STARTED, "Merging clips with color grade, intro/outro.")
         session.commit()
 
         clip_paths = [Path(s.video_clip_path) for s in scenes if s.video_clip_path]
@@ -113,11 +136,17 @@ def run_pipeline() -> None:
             audio_paths=audio_paths,
             output_path=final_path,
             subtitle_paths=subtitle_paths,
+            color_grade=True,
+            add_intro=True,
+            add_outro=True,
         )
 
         mark_job_ready(session, job=job, final_video_path=str(final_path), duration_seconds=duration)
         set_episode_status(session, generated_episode, EpisodeStatus.READY)
-        log_job_step(session, job.id, "editing", StepStatus.SUCCESS, f"Final video created: {final_path}")
+        log_job_step(
+            session, job.id, "editing", StepStatus.SUCCESS,
+            f"Final video ({duration:.1f}s) with color grade and intro/outro: {final_path}",
+        )
         session.commit()
 
         # 8. Thumbnail
@@ -147,9 +176,10 @@ def run_pipeline() -> None:
             session.commit()
 
         logger.info(
-            "Pipeline completed for episode %s at %s",
+            "Pipeline completed for episode %s (%s, %.1fs)",
             generated_episode.episode_number,
             final_path,
+            duration,
         )
     except Exception as exc:
         session.rollback()

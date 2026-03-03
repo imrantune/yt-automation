@@ -25,30 +25,35 @@ INITIAL_CHARACTERS = [
         "origin": "Thrace",
         "fighting_style": "Dual Sword",
         "personality": "Noble warrior",
+        "voice_id": "pNInz6obpgDQGcFmaJgB",   # Adam — deep, authoritative
     },
     {
         "name": "Crixus",
         "origin": "Gaul",
         "fighting_style": "Shield & Gladius",
         "personality": "Aggressive",
+        "voice_id": "VR6AewLTigWG4xSOukaG",   # Arnold — strong, gruff
     },
     {
         "name": "Gannicus",
         "origin": "Celt",
         "fighting_style": "Twin Blades",
         "personality": "Wild & fearless",
+        "voice_id": "ErXwobaYiN019PkySvjV",   # Antoni — youthful, charismatic
     },
     {
         "name": "Oenomaus",
         "origin": "Africa",
         "fighting_style": "Heavy Weapons",
         "personality": "Disciplined",
+        "voice_id": "onwK4e9ZLuTAKqWW03F9",   # Daniel — calm, deep British
     },
     {
         "name": "Agron",
         "origin": "Germania",
         "fighting_style": "Spear",
         "personality": "Loyal & fierce",
+        "voice_id": "N2lVS1w4EtoT3dr4eOWO",   # Callum — energetic, intense
     },
 ]
 

@@ -42,9 +42,22 @@ PRICING = {
     "runway": {
         "gen3a_turbo": {"per_second": 0.05},
     },
+    "kling": {
+        # Kling AI credit-based: ~$0.14/5s standard, ~$0.28/5s pro
+        # Pricing: $1 signup credit, varies by model/duration/mode
+        "standard_5s": 0.14,
+        "standard_10s": 0.28,
+        "professional_5s": 0.28,
+        "professional_10s": 0.56,
+    },
     "wan21": {
         # Local model — electricity only, effectively free
         "per_clip": 0.0,
+    },
+    "midjourney": {
+        # Proxy API pricing (GoAPI / similar): ~$0.04-0.08 per image
+        # Varies by plan: Basic ~$0.05, Standard ~$0.035, Pro ~$0.033
+        "per_image": 0.05,
     },
 }
 
@@ -173,6 +186,30 @@ def log_dalle(
     return entry
 
 
+def log_midjourney(
+    session: Session,
+    episode_id: int,
+    job_id: int | None,
+    operation: str,
+) -> ApiCostLog:
+    cost = PRICING["midjourney"]["per_image"]
+    entry = ApiCostLog(
+        episode_id=episode_id,
+        job_id=job_id,
+        service="midjourney",
+        operation=operation,
+        input_units=1,
+        output_units=0,
+        unit_type="images",
+        cost_usd=round(cost, 6),
+        metadata_json=json.dumps({"model": "midjourney-v6.1", "proxy": True}),
+    )
+    session.add(entry)
+    session.flush()
+    logger.debug("Cost logged: midjourney %s — 1 image = $%.4f", operation, cost)
+    return entry
+
+
 def log_video_provider(
     session: Session,
     episode_id: int,
@@ -198,6 +235,15 @@ def log_video_provider(
         meta = json.dumps({"model": "gen3a_turbo"})
         unit_type = "seconds"
         input_units_val = int(duration_seconds)
+    elif provider == "kling":
+        from config.settings import get_settings as _gs
+        kling_model = _gs(require_api_keys=False).kling_model
+        mode = "professional" if "pro" in kling_model.lower() else "standard"
+        dur_key = f"{mode}_{int(duration_seconds)}s"
+        cost = PRICING["kling"].get(dur_key, PRICING["kling"]["standard_5s"])
+        meta = json.dumps({"model": kling_model, "mode": mode, "duration": int(duration_seconds)})
+        unit_type = "clips"
+        input_units_val = 1
     elif provider == "wan21":
         cost = 0.0
         meta = json.dumps({"model": "Wan2.1-T2V-1.3B", "local": True})
@@ -232,19 +278,28 @@ def _estimate_video_costs(scene_count: int, current_provider: str | None) -> dic
         return None
 
     from config.settings import get_settings
-    unit_price = get_settings(require_api_keys=False).minimax_unit_price
+    s = get_settings(require_api_keys=False)
+    unit_price = s.minimax_unit_price
     minimax_cost = scene_count * 1.0 * unit_price
     runway_cost = scene_count * 6.0 * PRICING["runway"]["gen3a_turbo"]["per_second"]
+    kling_mode = "professional" if "pro" in s.kling_model.lower() else "standard"
+    kling_cost = scene_count * PRICING["kling"].get(f"{kling_mode}_5s", 0.14)
     wan21_cost = 0.0
+    dalle_cost = scene_count * PRICING["openai"]["dall-e-3-hd-1792x1024"]["per_image"]
+    midjourney_cost = scene_count * PRICING["midjourney"]["per_image"]
 
     providers = [
+        {"provider": "hybrid (DALL-E)", "estimated_cost": round(dalle_cost, 4), "is_current": current_provider == "openai" or (current_provider is None and s.image_provider == "dall-e"), "note": f"{scene_count} x $0.12/img"},
+        {"provider": "hybrid (Midjourney)", "estimated_cost": round(midjourney_cost, 4), "is_current": current_provider == "midjourney", "note": f"{scene_count} x $0.05/img"},
         {"provider": "wan21", "estimated_cost": round(wan21_cost, 4), "is_current": current_provider == "wan21", "note": "Local (free)"},
+        {"provider": "kling", "estimated_cost": round(kling_cost, 4), "is_current": current_provider == "kling", "note": f"{scene_count} x ${PRICING['kling'].get(f'{kling_mode}_5s', 0.14):.2f}/clip ({kling_mode})"},
         {"provider": "minimax", "estimated_cost": round(minimax_cost, 4), "is_current": current_provider == "minimax", "note": f"{scene_count} x 1 unit @ ${unit_price:.4f}"},
         {"provider": "runway", "estimated_cost": round(runway_cost, 4), "is_current": current_provider == "runway", "note": f"{scene_count} x 6s @ $0.05/s"},
     ]
 
     current_cost = next((p["estimated_cost"] for p in providers if p["is_current"]), 0.0)
-    savings = round(current_cost - wan21_cost, 4) if current_provider != "wan21" and current_cost > 0 else None
+    cheapest = min(p["estimated_cost"] for p in providers)
+    savings = round(current_cost - cheapest, 4) if current_cost > cheapest else None
 
     return {
         "scene_count": scene_count,

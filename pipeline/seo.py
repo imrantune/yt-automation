@@ -51,15 +51,21 @@ class SEOGenerator:
                 "}"
             )
 
-            response = self.client.chat.completions.create(
-                model=settings.openai_model,
-                messages=[
-                    {"role": "system", "content": "Return strict JSON only."},
-                    {"role": "user", "content": prompt},
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.7,
-            )
+            from pipeline.retry import retry_api_call
+
+            @retry_api_call(max_retries=3, base_delay=3.0)
+            def _call_gpt(client, model, prompt_text):
+                return client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": "Return strict JSON only."},
+                        {"role": "user", "content": prompt_text},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.7,
+                )
+
+            response = _call_gpt(self.client, settings.openai_model, prompt)
             if not response.choices:
                 raise ValueError("OpenAI returned empty choices for SEO generation.")
 

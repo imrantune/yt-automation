@@ -33,35 +33,37 @@ class ThumbnailGenerator:
 
     def _generate_image(self, episode: Episode) -> Image.Image:
         """Generate base image via DALL-E 3."""
+        from pipeline.retry import retry_api_call
+
         prompt = (
             f"Dramatic cinematic thumbnail for a Spartacus gladiator episode titled '{episode.title}'. "
             "Ancient Roman colosseum, dark moody lighting, epic battle atmosphere, "
             "warm golden shadows, blood and sand arena, hyper-detailed, "
             "no text in the image, 16:9 aspect ratio, photorealistic."
         )
-        response = self.client.images.generate(
-            model="dall-e-3",
-            prompt=prompt,
-            size="1792x1024",
-            quality="hd",
-            n=1,
-        )
-        image_url = response.data[0].url
-        img_response = requests.get(image_url, timeout=60)
-        img_response.raise_for_status()
-        img = Image.open(BytesIO(img_response.content)).convert("RGB")
+
+        @retry_api_call(max_retries=3, base_delay=5.0)
+        def _call_dalle():
+            resp = self.client.images.generate(
+                model="dall-e-3", prompt=prompt,
+                size="1792x1024", quality="hd", n=1,
+            )
+            url = resp.data[0].url
+            img_resp = requests.get(url, timeout=60)
+            img_resp.raise_for_status()
+            return img_resp.content
+
+        img_bytes = _call_dalle()
+        img = Image.open(BytesIO(img_bytes)).convert("RGB")
         return img.resize((THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT), Image.Resampling.LANCZOS)
 
     def _add_text_overlay(self, img: Image.Image, episode: Episode) -> Image.Image:
         """Add episode title and number as text overlay with outline."""
         draw = ImageDraw.Draw(img)
 
-        try:
-            title_font = ImageFont.truetype("/System/Library/Fonts/Supplemental/Impact.ttf", 56)
-            ep_font = ImageFont.truetype("/System/Library/Fonts/Supplemental/Impact.ttf", 36)
-        except OSError:
-            title_font = ImageFont.load_default()
-            ep_font = ImageFont.load_default()
+        from pipeline.video_generator import _find_font
+        title_font = _find_font(56)
+        ep_font = _find_font(36)
 
         title_text = episode.title[:50]
         ep_text = f"EPISODE {episode.episode_number}"

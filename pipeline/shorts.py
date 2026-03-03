@@ -75,23 +75,31 @@ class ShortsGenerator:
 
             vf = "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2"
 
-            cmd = [
-                "ffmpeg", "-y",
-                "-i", str(clip_path.resolve()), "-i", str(audio_path.resolve()),
+            srt_path = Path(scene.subtitle_file_path) if scene.subtitle_file_path else None
+            has_subs = srt_path and srt_path.exists()
+
+            cmd = ["ffmpeg", "-y",
+                   "-i", str(clip_path.resolve()),
+                   "-i", str(audio_path.resolve())]
+
+            if has_subs:
+                cmd.extend(["-i", str(srt_path.resolve())])
+
+            cmd.extend([
                 "-t", str(duration),
                 "-vf", vf,
+                "-map", "0:v", "-map", "1:a",
+            ])
+
+            if has_subs:
+                cmd.extend(["-map", "2:s", "-c:s", "mov_text"])
+
+            cmd.extend([
                 "-c:v", settings.video_codec, "-preset", "veryfast", "-b:v", "4000k",
                 "-c:a", settings.audio_codec, "-b:a", settings.audio_bitrate,
                 "-shortest",
                 str(short_path.resolve()),
-            ]
-
-            # Embed subtitle as soft stream if available
-            srt_path = Path(scene.subtitle_file_path) if scene.subtitle_file_path else None
-            if srt_path and srt_path.exists():
-                cmd.insert(5, str(srt_path.resolve()))
-                cmd.insert(5, "-i")
-                cmd.extend(["-c:s", "mov_text"])
+            ])
 
             _run_ffmpeg(cmd, "generate short")
 
