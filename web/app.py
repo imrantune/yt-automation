@@ -208,6 +208,18 @@ async def episode_detail(request: Request, episode_id: int):
         from pipeline.cost_tracker import get_episode_costs
         cost_data = get_episode_costs(session, episode_id)
 
+        job_failure_summary = None
+        failed_jobs = [j for j in jobs if j.status == JobStatus.FAILED]
+        if failed_jobs:
+            latest_failed = max(
+                failed_jobs,
+                key=lambda j: j.created_at or datetime(1970, 1, 1, tzinfo=timezone.utc),
+            )
+            failed_logs = list(session.execute(
+                select(JobLog).where(JobLog.job_id == latest_failed.id).order_by(JobLog.logged_at.asc())
+            ).scalars())
+            job_failure_summary = _get_failure_summary(failed_logs)
+
         return templates.TemplateResponse("episode_detail.html", {
             "request": request,
             "episode": episode,
@@ -221,6 +233,7 @@ async def episode_detail(request: Request, episode_id: int):
             "final_video_url": final_video_url,
             "thumbnail_url": thumbnail_url,
             "cost_data": cost_data,
+            "job_failure_summary": job_failure_summary,
         })
     finally:
         session.close()
@@ -298,6 +311,9 @@ async def generate_page(request: Request):
 @app.post("/api/generate")
 async def api_generate():
     """Trigger pipeline in background thread, return job tracking info."""
+    from pipeline_control import clear_cancel
+    clear_cancel()
+
     def _run():
         try:
             from main import run_pipeline
@@ -366,6 +382,20 @@ async def api_latest_job():
 
 
 # ─── Active Pipeline Tracking ─────────────────────────────────────────────────
+
+STEP_KEY_TO_LABEL = {s["key"]: s["label"] for s in PIPELINE_STEPS}
+
+
+def _get_failure_summary(logs: list) -> dict | None:
+    """Return the last FAILED step's human-readable summary for 'why did this job fail?'.
+    Returns { "step": "Merge", "message": "FFmpeg error: ..." } or None if no failure."""
+    failed_logs = [log for log in logs if getattr(log, "status", None) == StepStatus.FAILED]
+    if not failed_logs:
+        return None
+    last = failed_logs[-1]
+    step_label = STEP_KEY_TO_LABEL.get(last.step, last.step.replace("_", " ").title())
+    return {"step": step_label, "message": (last.message or "")[:500]}
+
 
 def _build_step_timeline(logs: list[JobLog]) -> list[dict]:
     """Build per-step timing from log entries.
@@ -464,6 +494,8 @@ async def api_pipelines_active():
             if job.episode:
                 ep_title = job.episode.title
 
+            failure_summary = _get_failure_summary(logs) if job.status == JobStatus.FAILED else None
+
             result.append({
                 "job_id": job.id,
                 "episode_id": job.episode_id,
@@ -472,6 +504,7 @@ async def api_pipelines_active():
                 "current_step": current_step,
                 "elapsed_seconds": elapsed,
                 "timeline": timeline,
+                "failure_summary": failure_summary,
             })
 
         return JSONResponse({"pipelines": result})
@@ -502,14 +535,25 @@ async def api_job_timeline(job_id: int):
             else:
                 elapsed = round((now - job.created_at).total_seconds(), 1)
 
+        failure_summary = _get_failure_summary(logs) if job.status == JobStatus.FAILED else None
+
         return JSONResponse({
             "job_id": job.id,
             "status": job.status.value,
             "elapsed_seconds": elapsed,
             "timeline": timeline,
+            "failure_summary": failure_summary,
         })
     finally:
         session.close()
+
+
+@app.post("/api/pipeline/cancel")
+async def api_pipeline_cancel():
+    """Request the running pipeline to stop after the current step (graceful cancel)."""
+    from pipeline_control import request_cancel
+    request_cancel()
+    return JSONResponse({"status": "ok", "message": "Cancel requested. Pipeline will stop after the current step."})
 
 
 # ─── Wan 2.1 Model Status ─────────────────────────────────────────────────────
@@ -2132,6 +2176,14 @@ async def api_playground_dalle(request: Request):
         })
     except Exception as exc:
         _pg_log.exception("Playground DALL-E failed")
+        err_str = str(exc).lower()
+        if "content_policy" in err_str or "safety" in err_str or "rejected" in err_str:
+            return JSONResponse({
+                "error": "Your prompt was rejected by DALL-E's safety system. "
+                         "Avoid: blood, gore, graphic violence, weapons in use, injuries. "
+                         "Use: dramatic atmosphere, theatrical poses, sand and dust, no violence.",
+                "code": "content_policy_violation",
+            }, status_code=400)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 

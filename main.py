@@ -17,6 +17,7 @@ from database.connection import (
     set_episode_status,
 )
 from database.models import EpisodeStatus, JobStatus, StepStatus, VideoJob
+from pipeline_control import clear_cancel, should_cancel
 from pipeline.music import mix_episode_music
 from pipeline.script_generator import ScriptGenerator
 from pipeline.seo import SEOGenerator
@@ -52,6 +53,7 @@ def run_pipeline() -> None:
 
     youtube_enabled = bool(os.getenv("YOUTUBE_CLIENT_SECRET_PATH", ""))
 
+    clear_cancel()
     session = SessionLocal()
     job_id: int | None = None
     try:
@@ -76,28 +78,43 @@ def run_pipeline() -> None:
         job.episode_id = generated_episode.id
         session.add(job)
         session.commit()
+        if should_cancel():
+            _cancel_and_exit(session, job, generated_episode)
+            return
 
         # 2. SEO metadata
         seo = seo_gen.generate_seo(session=session, job_id=job.id, episode=generated_episode)
         session.commit()
+        if should_cancel():
+            _cancel_and_exit(session, job, generated_episode)
+            return
 
         # 3. Voiceover (per-character voices)
         voice_gen.generate_episode_audio(
             session=session, job_id=job.id, episode=generated_episode,
         )
         session.commit()
+        if should_cancel():
+            _cancel_and_exit(session, job, generated_episode)
+            return
 
         # 4. Subtitles from audio
         subtitle_gen.generate_episode_subtitles(
             session=session, job_id=job.id, episode=generated_episode,
         )
         session.commit()
+        if should_cancel():
+            _cancel_and_exit(session, job, generated_episode)
+            return
 
         # 5. Video clips (Minimax default, with fallback)
         video_gen.generate_episode_clips(
             session=session, job_id=job.id, episode=generated_episode,
         )
         session.commit()
+        if should_cancel():
+            _cancel_and_exit(session, job, generated_episode)
+            return
 
         # 6. Mix background music with narration audio
         scenes = list(generated_episode.scenes)
@@ -115,6 +132,9 @@ def run_pipeline() -> None:
         log_job_step(session, job.id, "sfx", StepStatus.SUCCESS,
                      f"SFX layered for {len(scenes)} scenes.")
         session.commit()
+        if should_cancel():
+            _cancel_and_exit(session, job, generated_episode)
+            return
 
         # 7. FFmpeg merge (video + mixed audio + subtitles + color grade + intro/outro)
         set_episode_status(session, generated_episode, EpisodeStatus.EDITING)
@@ -148,6 +168,9 @@ def run_pipeline() -> None:
             f"Final video ({duration:.1f}s) with color grade and intro/outro: {final_path}",
         )
         session.commit()
+        if should_cancel():
+            _cancel_and_exit(session, job, generated_episode)
+            return
 
         # 8. Thumbnail
         thumb_path = thumb_gen.generate_thumbnail(
@@ -189,6 +212,19 @@ def run_pipeline() -> None:
         raise
     finally:
         session.close()
+
+
+def _cancel_and_exit(session, job, episode) -> None:
+    """Mark job and episode as failed due to user cancel, clear cancel flag, commit."""
+    from pipeline_control import clear_cancel
+    clear_cancel()
+    job.status = JobStatus.FAILED
+    episode.status = EpisodeStatus.FAILED
+    session.add(job)
+    session.add(episode)
+    log_job_step(session, job.id, "pipeline", StepStatus.FAILED, "Cancelled by user.")
+    session.commit()
+    logger.info("Pipeline cancelled by user for job_id=%s", job.id)
 
 
 def _mark_failure(job_id: int, exc: Exception) -> None:

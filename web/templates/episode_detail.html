@@ -7,11 +7,17 @@
     <a href="/episodes" class="text-gray-400 hover:text-white text-sm">&larr; Episodes</a>
     <span class="text-gray-600">/</span>
     <h2 class="text-2xl font-bold">Episode {{ episode.episode_number }}: {{ episode.title }}</h2>
-    <span class="px-2 py-1 rounded-full text-xs font-medium status-{{ episode.status.value }}">{{ episode.status.value }}</span>
+    <span class="px-2 py-1 rounded-full text-xs font-medium status-{{ episode.status.value }}" title="Current episode status in the pipeline.">{{ episode.status.value }}</span>
 </div>
+{% if job_failure_summary %}
+<div class="bg-red-950/30 border border-red-900/50 rounded-xl p-4 mb-6" title="Reason the pipeline failed for this episode (from last failed step log).">
+    <p class="text-xs font-semibold text-red-400 uppercase mb-1">Why this job failed</p>
+    <p class="text-sm text-red-200"><span class="font-medium">{{ job_failure_summary.step }}</span> — {{ job_failure_summary.message[:300] }}{% if job_failure_summary.message|length > 300 %}…{% endif %}</p>
+</div>
+{% endif %}
 
 <!-- Action Buttons -->
-<div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-6">
+<div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-6" title="Retry individual pipeline steps for this episode. Use when a step failed or you want to regenerate only part of the pipeline.">
     <h3 class="text-xs font-semibold text-gray-500 uppercase mb-3">Pipeline Actions</h3>
     <div class="flex flex-wrap items-center gap-2">
         <button onclick="retryAction('retry-images', {{ episode.id }})" id="btn-retry-images"

@@ -26,41 +26,42 @@ IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 CHARACTER_VISUAL_TRAITS: dict[str, str] = {
     "Spartacus": (
         "muscular Thracian gladiator with short dark hair and a scar across his left cheek, "
-        "wearing bronze pauldrons and a leather chest guard, dual swords strapped to back"
+        "wearing bronze pauldrons and leather chest guard, dramatic pose"
     ),
     "Crixus": (
         "massive bald Gallic gladiator with a thick black beard and tribal tattoos on his arms, "
-        "carrying a round bronze shield and short gladius, heavy iron chest plate"
+        "round bronze shield, heavy iron chest plate, imposing stance"
     ),
     "Gannicus": (
-        "lean athletic Celtic warrior with flowing sandy-blond hair and blue war paint on face, "
-        "twin curved blades in hand, light leather armor, cocky stance"
+        "lean athletic Celtic warrior with flowing sandy-blond hair and blue face paint, "
+        "light leather armor, confident stance"
     ),
     "Oenomaus": (
         "tall dark-skinned African gladiator with a shaved head and gold ear cuffs, "
-        "wielding a massive war hammer, heavy bronze lamellar armor, stoic expression"
+        "heavy bronze lamellar armor, stoic expression"
     ),
     "Agron": (
         "young Germanic warrior with short reddish-brown hair and a fur-lined cloak, "
-        "holding a long iron spear, chainmail vest, fierce determined gaze"
+        "chainmail vest, determined gaze"
     ),
 }
 
 SCENE_TYPE_FRAMING: dict[SceneType, str] = {
     SceneType.INTRO: "wide establishing shot of the Roman colosseum at sunset with torches lit, crowds arriving",
-    SceneType.FIGHT1: "dynamic mid-shot of two gladiators circling each other in the arena, dust rising from the sand",
-    SceneType.FIGHT2: "intense close-up battle scene, gladiators locked in combat, shields clashing, crowd on their feet",
-    SceneType.CLIMAX: "dramatic low-angle hero shot of a gladiator standing victorious, golden light streaming down",
-    SceneType.OUTRO: "wide shot of the arena at dusk, torch-lit and smoke-filled, gladiators walking away",
+    SceneType.FIGHT1: "dynamic mid-shot of two armored figures facing each other in the arena, dust rising from the sand",
+    SceneType.FIGHT2: "intense close-up dramatic moment, two gladiators in theatrical pose, shields raised, crowd on their feet",
+    SceneType.CLIMAX: "dramatic low-angle hero shot of a gladiator in golden light, triumphant pose, no violence",
+    SceneType.OUTRO: "wide shot of the arena at dusk, torch-lit and smoke-filled, figures walking away",
     SceneType.OTHER: "cinematic shot inside the Roman colosseum with dramatic torchlight and shadows",
 }
 
 BASE_STYLE = (
     "Hyper-detailed digital painting, cinematic composition, dramatic chiaroscuro lighting, "
-    "warm golden and deep red tones, ancient Rome aesthetic, 16:9 aspect ratio, "
+    "warm golden and amber tones, ancient Rome aesthetic, 16:9 aspect ratio, "
     "dark moody atmosphere with dust particles in shafts of light, "
-    "style of concept art for a AAA historical video game. "
-    "NO text, NO watermarks, NO modern elements."
+    "style of concept art for a historical drama. "
+    "NO text, NO watermarks, NO modern elements. "
+    "Family-friendly: NO blood, NO gore, NO graphic violence, NO injuries. Theatrical drama only."
 )
 
 
@@ -81,13 +82,39 @@ def _get_character_descriptions(session: Session, narration: str) -> str:
     return "; ".join(mentioned[:3])
 
 
+def _sanitize_for_dalle(text: str, max_len: int = 300) -> str:
+    """Reduce content-policy triggers: violence, blood, weapons-in-action, death."""
+    t = text[:max_len]
+    for old, new in [
+        ("blood", "dust"),
+        ("gore", "sand"),
+        ("bloody", "dusty"),
+        ("kill", "defeat"),
+        ("killed", "fell"),
+        ("dying", "stumbling"),
+        ("death", "end"),
+        ("dead", "fallen"),
+        ("strike", "move"),
+        ("struck", "hit"),
+        ("wound", "mark"),
+        ("wounded", "marked"),
+        ("sword strike", "dramatic move"),
+        ("clash", "meet"),
+        ("slaughter", "contest"),
+        ("brutal", "intense"),
+        ("violent", "intense"),
+    ]:
+        t = t.replace(old, new)
+    return t
+
+
 def build_scene_image_prompt(
     session: Session,
     episode: Episode,
     scene: Scene,
 ) -> str:
-    """Build a DALL-E prompt with character consistency and scene-type framing."""
-    safe_narration = scene.narration_text[:300].replace("blood", "dust").replace("gore", "sand")
+    """Build a DALL-E prompt with character consistency and scene-type framing (content-policy safe)."""
+    safe_narration = _sanitize_for_dalle(scene.narration_text)
     framing = SCENE_TYPE_FRAMING.get(scene.scene_type, SCENE_TYPE_FRAMING[SceneType.OTHER])
     char_desc = _get_character_descriptions(session, scene.narration_text)
 

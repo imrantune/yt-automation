@@ -36,10 +36,10 @@ class ThumbnailGenerator:
         from pipeline.retry import retry_api_call
 
         prompt = (
-            f"Dramatic cinematic thumbnail for a Spartacus gladiator episode titled '{episode.title}'. "
-            "Ancient Roman colosseum, dark moody lighting, epic battle atmosphere, "
-            "warm golden shadows, blood and sand arena, hyper-detailed, "
-            "no text in the image, 16:9 aspect ratio, photorealistic."
+            f"Dramatic cinematic thumbnail for a historical arena episode titled '{episode.title}'. "
+            "Ancient Roman colosseum, dark moody lighting, epic theatrical atmosphere, "
+            "warm golden shadows, sand and dust arena, hyper-detailed, "
+            "no violence no blood no gore, no text in the image, 16:9 aspect ratio, photorealistic."
         )
 
         @retry_api_call(max_retries=3, base_delay=5.0)
