@@ -47,21 +47,28 @@ CHARACTER_VISUAL_TRAITS: dict[str, str] = {
 }
 
 SCENE_TYPE_FRAMING: dict[SceneType, str] = {
-    SceneType.INTRO: "wide establishing shot of the Roman colosseum at sunset with torches lit, crowds arriving",
-    SceneType.FIGHT1: "dynamic mid-shot of two armored figures facing each other in the arena, dust rising from the sand",
-    SceneType.FIGHT2: "intense close-up dramatic moment, two gladiators in theatrical pose, shields raised, crowd on their feet",
-    SceneType.CLIMAX: "dramatic low-angle hero shot of a gladiator in golden light, triumphant pose, no violence",
-    SceneType.OUTRO: "wide shot of the arena at dusk, torch-lit and smoke-filled, figures walking away",
-    SceneType.OTHER: "cinematic shot inside the Roman colosseum with dramatic torchlight and shadows",
+    SceneType.INTRO: "wide establishing shot of a theatrical Roman colosseum at sunset with torches lit, celebratory atmosphere",
+    SceneType.FIGHT1: "dramatic theatrical performance of two armored figures facing each other, cinematic posing, professional stage combat style",
+    SceneType.FIGHT2: "artistic mid-shot of performers in ancient armor, shield-to-shield dramatic stance, theatrical shadows, heroic expressions",
+    SceneType.CLIMAX: "majestic low-angle hero shot in golden light, triumphant artistic pose, celebratory lighting, peaceful victory",
+    SceneType.OUTRO: "wide shot of the empty arena at dusk, glowing torches, peaceful smoke, cinematic historical atmosphere",
+    SceneType.OTHER: "cinematic artistic scenery inside a historical amphitheater with atmospheric lighting",
 }
 
 BASE_STYLE = (
     "Hyper-detailed digital painting, cinematic composition, dramatic chiaroscuro lighting, "
-    "warm golden and amber tones, ancient Rome aesthetic, 16:9 aspect ratio, "
+    "warm golden tones, historical theater aesthetic, 16:9 aspect ratio, "
     "dark moody atmosphere with dust particles in shafts of light, "
     "style of concept art for a historical drama. "
     "NO text, NO watermarks, NO modern elements. "
-    "Family-friendly: NO blood, NO gore, NO graphic violence, NO injuries. Theatrical drama only."
+    "Artistic theatrical performance, safe for all audiences, historical reenactment aesthetic."
+)
+
+SAFETY_INSTRUCTION = (
+    "IMPORTANT: Generate a safe, theatrical, PG-rated historical drama scene. "
+    "Focus on atmospheric lighting, cinematic composition, and expressive posing. "
+    "Do not include any weapons in use, no combat, no injuries, no blood, and no aggression. "
+    "The scenery and armor are for artistic historical reenactment only. "
 )
 
 
@@ -82,27 +89,54 @@ def _get_character_descriptions(session: Session, narration: str) -> str:
     return "; ".join(mentioned[:3])
 
 
-def _sanitize_for_dalle(text: str, max_len: int = 300) -> str:
+def sanitize_for_dalle(text: str, max_len: int = 300) -> str:
     """Reduce content-policy triggers: violence, blood, weapons-in-action, death."""
-    t = text[:max_len]
+    t = text[:max_len].lower()
     for old, new in [
         ("blood", "dust"),
         ("gore", "sand"),
         ("bloody", "dusty"),
-        ("kill", "defeat"),
-        ("killed", "fell"),
-        ("dying", "stumbling"),
-        ("death", "end"),
+        ("kill", "surpass"),
+        ("killed", "overcome"),
+        ("dying", "fading"),
+        ("death", "conclusion"),
         ("dead", "fallen"),
-        ("strike", "move"),
+        ("strike", "movement"),
         ("struck", "hit"),
         ("wound", "mark"),
         ("wounded", "marked"),
-        ("sword strike", "dramatic move"),
+        ("sword strike", "artistic move"),
         ("clash", "meet"),
         ("slaughter", "contest"),
         ("brutal", "intense"),
-        ("violent", "intense"),
+        ("violent", "dynamic"),
+        ("weapon", "theatrical tool"),
+        ("sword", "theatrical blade"),
+        ("gladius", "blunt stage blade"),
+        ("spear", "ceremonial staff"),
+        ("dagger", "prop blade"),
+        ("stab", "gesture"),
+        ("pierce", "touch"),
+        ("pain", "effort"),
+        ("agony", "tension"),
+        ("scream", "shout"),
+        ("torture", "hardship"),
+        ("execution", "exit"),
+        ("behead", "overcome"),
+        ("murder", "defeat"),
+        ("fight", "choreographed contest"),
+        ("battle", "theatrical performance"),
+        ("warrior", "heroic figure"),
+        ("combat", "stage action"),
+        ("attack", "advance"),
+        ("opponent", "rival performer"),
+        ("adversary", "challenger"),
+        ("enemy", "rival"),
+        ("aggressive", "passionate"),
+        ("assault", "sequence"),
+        ("thrust", "motion"),
+        ("blade", "parade blade"),
+        ("war", "history"),
     ]:
         t = t.replace(old, new)
     return t
@@ -114,11 +148,12 @@ def build_scene_image_prompt(
     scene: Scene,
 ) -> str:
     """Build a DALL-E prompt with character consistency and scene-type framing (content-policy safe)."""
-    safe_narration = _sanitize_for_dalle(scene.narration_text)
+    safe_narration = sanitize_for_dalle(scene.narration_text)
     framing = SCENE_TYPE_FRAMING.get(scene.scene_type, SCENE_TYPE_FRAMING[SceneType.OTHER])
     char_desc = _get_character_descriptions(session, scene.narration_text)
 
     return (
+        f"{SAFETY_INSTRUCTION} "
         f"{framing}. "
         f"Characters: {char_desc}. "
         f"Scene context: {safe_narration}. "
@@ -126,7 +161,7 @@ def build_scene_image_prompt(
     )
 
 
-def _generate_dalle_image(prompt: str, output_path: Path, quality: str = "hd", size: str = "1792x1024") -> Path:
+def _generate_dalle_image(prompt: str, output_path: Path, quality: str = "hd", size: str = "1792x1024", is_short: bool = False) -> Path:
     """Generate a single image via DALL-E 3 API."""
     from pipeline.retry import retry_api_call
 
@@ -148,13 +183,15 @@ def _generate_dalle_image(prompt: str, output_path: Path, quality: str = "hd", s
     img_bytes = _call_dalle()
     img = Image.open(BytesIO(img_bytes)).convert("RGB")
     w, h = (int(x) for x in settings.video_resolution.split("x"))
+    if is_short:
+        w, h = 1080, 1920
     img = img.resize((w, h), Image.Resampling.LANCZOS)
     img.save(str(output_path), "PNG", optimize=True)
     logger.info("DALL-E image saved: %s", output_path)
     return output_path
 
 
-def _generate_midjourney_image(prompt: str, output_path: Path) -> Path:
+def _generate_midjourney_image(prompt: str, output_path: Path, is_short: bool = False) -> Path:
     """Generate a single image via Midjourney proxy API (GoAPI-compatible).
 
     Flow: POST /mj/v2/imagine -> poll task -> download upscaled image -> resize.
@@ -165,7 +202,8 @@ def _generate_midjourney_image(prompt: str, output_path: Path) -> Path:
     base = settings.midjourney_api_base.rstrip("/")
     headers = {"x-api-key": api_key, "Content-Type": "application/json"}
 
-    mj_prompt = prompt[:2000] + " --ar 16:9 --style raw --v 6.1"
+    ar_tag = "--ar 9:16" if is_short else "--ar 16:9"
+    mj_prompt = prompt[:2000] + f" {ar_tag} --style raw --v 6.1"
 
     @retry_api_call(max_retries=3, base_delay=5.0)
     def _submit_imagine():
@@ -222,6 +260,8 @@ def _generate_midjourney_image(prompt: str, output_path: Path) -> Path:
 
     img = Image.open(BytesIO(img_response.content)).convert("RGB")
     w, h = (int(x) for x in settings.video_resolution.split("x"))
+    if is_short:
+        w, h = 1080, 1920
     img = img.resize((w, h), Image.Resampling.LANCZOS)
     img.save(str(output_path), "PNG", optimize=True)
     logger.info("Midjourney image saved: %s (task %s)", output_path, task_id)
@@ -250,9 +290,10 @@ def generate_scene_image(
     provider = get_active_image_provider()
 
     if provider == "midjourney":
-        _generate_midjourney_image(prompt, image_path)
+        _generate_midjourney_image(prompt, image_path, is_short=episode.is_short)
     else:
-        _generate_dalle_image(prompt, image_path, quality=quality, size=size)
+        actual_size = "1024x1792" if episode.is_short else size
+        _generate_dalle_image(prompt, image_path, quality=quality, size=actual_size, is_short=episode.is_short)
 
     logger.info("Scene image [%s] saved: %s (prompt: %.80s…)", provider, image_path, prompt)
     return image_path
@@ -294,8 +335,9 @@ def generate_episode_images(
             if img_provider == "midjourney":
                 log_midjourney(session, episode.id, job_id, f"scene_{scene.scene_order}_image")
             else:
+                actual_size = "1024x1792" if episode.is_short else "1792x1024"
                 log_dalle(session, episode.id, job_id, f"scene_{scene.scene_order}_image",
-                          size="1792x1024", quality="hd")
+                          size=actual_size, quality="hd")
             session.flush()
 
         log_job_step(

@@ -92,8 +92,10 @@ def apply_ken_burns(
     scene_type: SceneType = SceneType.OTHER,
 ) -> None:
     """Convert a still image into a video clip with Ken Burns pan/zoom motion."""
-    w_str, h_str = settings.video_resolution.split("x")
-    w, h = int(w_str), int(h_str)
+    from PIL import Image
+    with Image.open(image_path) as img:
+        w, h = img.size
+    
     fps = settings.video_fps
     frames = int(duration_seconds * fps)
 
@@ -170,9 +172,13 @@ class HybridImageProvider(BaseVideoProvider):
         from openai import OpenAI
         from PIL import Image
 
+        from pipeline.image_generator import sanitize_for_dalle
+        safety_instr = "Provide a safe, theatrical, PG-rated historical drama scene. Artistic historical performance, no modern elements. "
+        safe_prompt = sanitize_for_dalle(prompt, max_len=4000)
+
         client = OpenAI(api_key=settings.openai_api_key)
         response = client.images.generate(
-            model="dall-e-3", prompt=prompt[:4000],
+            model="dall-e-3", prompt=f"{safety_instr}{safe_prompt}",
             size="1792x1024", quality="hd", n=1,
         )
         img_response = requests.get(response.data[0].url, timeout=60)
@@ -861,6 +867,7 @@ def merge_episode_assets(
     color_grade: bool = True,
     add_intro: bool = True,
     add_outro: bool = True,
+    is_short: bool = False,
 ) -> float:
     """Normalize clips, apply color grading, add intro/outro, concat, mix audio, embed subtitles.
 
@@ -872,7 +879,10 @@ def merge_episode_assets(
     temp = settings.temp_dir
     normalized_clips: list[Path] = []
     x264_preset = "veryfast"
-    width, height = settings.video_resolution.split("x")
+    if is_short:
+        width, height = "1080", "1920"
+    else:
+        width, height = settings.video_resolution.split("x")
 
     for i, clip in enumerate(clip_paths):
         norm_path = temp / f"episode_{episode_number:04d}_norm_{i:02d}.mp4"

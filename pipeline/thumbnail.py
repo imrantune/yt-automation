@@ -36,16 +36,20 @@ class ThumbnailGenerator:
         from pipeline.retry import retry_api_call
 
         prompt = (
+            "Provide a safe, theatrical, PG-rated historical drama scene. "
             f"Dramatic cinematic thumbnail for a historical arena episode titled '{episode.title}'. "
             "Ancient Roman colosseum, dark moody lighting, epic theatrical atmosphere, "
             "warm golden shadows, sand and dust arena, hyper-detailed, "
-            "no violence no blood no gore, no text in the image, 16:9 aspect ratio, photorealistic."
+            "Artistic historical reenactment, no modern elements, 16:9 aspect ratio."
         )
+
+        from pipeline.image_generator import sanitize_for_dalle
+        safe_prompt = sanitize_for_dalle(prompt)
 
         @retry_api_call(max_retries=3, base_delay=5.0)
         def _call_dalle():
             resp = self.client.images.generate(
-                model="dall-e-3", prompt=prompt,
+                model="dall-e-3", prompt=safe_prompt,
                 size="1792x1024", quality="hd", n=1,
             )
             url = resp.data[0].url

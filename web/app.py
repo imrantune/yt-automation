@@ -341,6 +341,79 @@ async def api_generate():
     return JSONResponse({"status": "started", "message": "Pipeline started in background."})
 
 
+from pydantic import BaseModel
+
+class GenerateShortRequest(BaseModel):
+    topic: str
+    character_name: str
+    custom_prompt: str = ""
+
+class CharacterRequest(BaseModel):
+    name: str
+    origin: str = ""
+    fighting_style: str = ""
+    personality: str = ""
+    is_alive: bool = True
+
+
+@app.get("/trending-shorts", response_class=HTMLResponse)
+async def trending_shorts_page(request: Request):
+    """Serve the trending standalone shorts generation UI."""
+    session = SessionLocal()
+    try:
+        characters = list(session.execute(
+            select(Character).where(Character.is_alive == True).order_by(Character.name.asc())
+        ).scalars())
+        total_cost = session.query(func.sum(ApiCostLog.cost_usd)).scalar() or 0.0
+        return templates.TemplateResponse("trending_shorts.html", {
+            "request": request,
+            "characters": characters,
+            "total_cost_usd": round(float(total_cost), 4),
+        })
+    finally:
+        session.close()
+
+@app.get("/api/trending_topics")
+async def api_trending_topics(niche: str = "spartacus history facts"):
+    """Fetch AI suggested trending topics for a niche."""
+    from pipeline.trending import TrendingSuggestor
+    suggestor = TrendingSuggestor()
+    topics = suggestor.suggest_topics(niche)
+    return JSONResponse({"topics": topics})
+
+@app.post("/api/generate_short")
+async def api_generate_short(req: GenerateShortRequest):
+    """Trigger standalone short pipeline in background thread."""
+    from pipeline_control import clear_cancel
+    clear_cancel()
+
+    def _run():
+        try:
+            from pipeline.standalone_shorts import run_standalone_short
+            run_standalone_short(req.topic, req.character_name, req.custom_prompt)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).exception("Background short pipeline failed: %s", exc)
+            try:
+                from database.connection import SessionLocal as SL, log_job_step
+                from database.models import StepStatus, JobStatus, VideoJob
+                from sqlalchemy import desc
+                s = SL()
+                job = s.execute(select(VideoJob).order_by(desc(VideoJob.id)).limit(1)).scalar_one_or_none()
+                if job and job.status == JobStatus.RUNNING:
+                    job.status = JobStatus.FAILED
+                    s.add(job)
+                    log_job_step(s, job.id, "pipeline", StepStatus.FAILED, f"Shorts pipeline crashed: {str(exc)[:500]}")
+                    s.commit()
+                s.close()
+            except Exception:
+                pass
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    return JSONResponse({"status": "started", "message": "Standalone short started."})
+
+
 @app.get("/api/jobs/{job_id}/logs")
 async def api_job_logs(job_id: int):
     """JSON endpoint for polling job logs."""
@@ -936,6 +1009,88 @@ async def api_set_character_voice(character_id: int, request: Request):
         session.add(char)
         session.commit()
         return JSONResponse({"success": True, "character_id": character_id, "voice_id": voice_id})
+    except Exception as exc:
+        session.rollback()
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    finally:
+        session.close()
+
+
+# ─── Character Management ────────────────────────────────────────────────────
+
+@app.post("/api/characters")
+async def api_create_character(req: CharacterRequest):
+    """Create a new character."""
+    session = SessionLocal()
+    try:
+        existing = session.execute(
+            select(Character).where(Character.name == req.name)
+        ).scalar_one_or_none()
+        if existing:
+            return JSONResponse({"error": "Character with this name already exists"}, status_code=400)
+            
+        char = Character(
+            name=req.name,
+            origin=req.origin,
+            fighting_style=req.fighting_style,
+            personality=req.personality,
+            is_alive=req.is_alive
+        )
+        session.add(char)
+        session.commit()
+        return JSONResponse({"success": True, "character_id": char.id})
+    except Exception as exc:
+        session.rollback()
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    finally:
+        session.close()
+
+@app.put("/api/characters/{character_id}")
+async def api_update_character(character_id: int, req: CharacterRequest):
+    """Update an existing character."""
+    session = SessionLocal()
+    try:
+        char = session.execute(
+            select(Character).where(Character.id == character_id)
+        ).scalar_one_or_none()
+        if not char:
+            return JSONResponse({"error": "Character not found"}, status_code=404)
+            
+        if char.name != req.name:
+            conflict = session.execute(
+                select(Character).where(Character.name == req.name)
+            ).scalar_one_or_none()
+            if conflict:
+                return JSONResponse({"error": "Another character with this name already exists"}, status_code=400)
+
+        char.name = req.name
+        char.origin = req.origin
+        char.fighting_style = req.fighting_style
+        char.personality = req.personality
+        char.is_alive = req.is_alive
+        
+        session.commit()
+        return JSONResponse({"success": True, "character_id": char.id})
+    except Exception as exc:
+        session.rollback()
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    finally:
+        session.close()
+
+@app.delete("/api/characters/{character_id}")
+async def api_delete_character(character_id: int):
+    """Delete a character."""
+    session = SessionLocal()
+    try:
+        char = session.execute(
+            select(Character).where(Character.id == character_id)
+        ).scalar_one_or_none()
+        if not char:
+            return JSONResponse({"error": "Character not found"}, status_code=404)
+            
+        session.delete(char)
+        session.commit()
+        return JSONResponse({"success": True})
     except Exception as exc:
         session.rollback()
         return JSONResponse({"error": str(exc)}, status_code=500)

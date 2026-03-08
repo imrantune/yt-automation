@@ -157,8 +157,9 @@ def run_pipeline() -> None:
             output_path=final_path,
             subtitle_paths=subtitle_paths,
             color_grade=True,
-            add_intro=True,
-            add_outro=True,
+            add_intro=not generated_episode.is_short,
+            add_outro=not generated_episode.is_short,
+            is_short=generated_episode.is_short,
         )
 
         mark_job_ready(session, job=job, final_video_path=str(final_path), duration_seconds=duration)

@@ -209,3 +209,115 @@ class ScriptGenerator:
             log_job_step_isolated(job_id, "scripting", StepStatus.FAILED, f"Script generation failed: {exc}")
             logger.exception("Script generation failed.")
             raise
+
+    def generate_standalone_short(
+        self,
+        session: Session,
+        job_id: int,
+        topic: str,
+        character_name: str,
+        custom_prompt: str = "",
+    ) -> tuple[Episode, dict]:
+        """Generate a single-scene script for a standalone YouTube Short."""
+        manager = ConsistencyManager(session)
+        try:
+            series = manager.get_or_create_series(
+                name="Trending Shorts",
+                theme="Standalone viral trending gladiator topics.",
+                style="Fast-paced, high energy, vertical short.",
+            )
+            episode_number = manager.next_episode_number(series_id=series.id)
+            
+            prompt = (
+                f"You are a cinematic Spartacus arena writer creating a vertical YouTube Short.\n"
+                f"Create a fast-paced script broken down into 8-10 short scenes about the following topic: '{topic}'.\n"
+                f"The main character speaking or featured MUST be '{character_name}'.\n"
+            )
+            if custom_prompt:
+                prompt += f"Additional instructions: {custom_prompt}\n"
+            prompt += (
+                "Requirements:\n"
+                "- The entire short must be around 60-80 words total.\n"
+                "- Split this text naturally across 8-10 scenes so the visuals change every 4-5 seconds.\n"
+                "- Each scene should only have 1-2 short sentences of narration.\n"
+                "- Punchy, engaging hook at the start.\n"
+                "Return JSON shape:\n"
+                "{\n"
+                '  "title": "string",\n'
+                '  "description": "string",\n'
+                '  "scenes": [\n'
+                '    { "narration_text": "string" }\n'
+                '  ]\n'
+                "}\n"
+            )
+
+            log_job_step(session, job_id, "scripting", StepStatus.STARTED, "Starting standalone short script generation.")
+
+            from pipeline.retry import retry_api_call
+
+            @retry_api_call(max_retries=3, base_delay=3.0)
+            def _call_gpt(client, model, prompt_text):
+                return client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": "Return strict JSON only."},
+                        {"role": "user", "content": prompt_text},
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.8,
+                )
+
+            response = _call_gpt(self.client, settings.openai_model, prompt)
+            content = response.choices[0].message.content or "{}"
+            payload = json.loads(content)
+            
+            title = payload.get("title", f"Short: {topic}")
+            description = payload.get("description", "")
+            scenes_data = payload.get("scenes", [])
+            
+            # Fallback if no scenes returned
+            if not scenes_data:
+                scenes_data = [{"narration_text": payload.get("narration_text", "No script provided.")}]
+
+            episode = Episode(
+                series_id=series.id,
+                episode_number=episode_number,
+                title=title[:250],
+                description=description,
+                status=EpisodeStatus.SCRIPTING,
+                is_short=True,
+            )
+            session.add(episode)
+            session.flush()
+
+            for i, scene_data in enumerate(scenes_data):
+                scene = Scene(
+                    episode_id=episode.id,
+                    scene_order=i + 1,
+                    scene_type=SceneType.CLIMAX,
+                    narration_text=scene_data.get("narration_text", ""),
+                )
+                session.add(scene)
+            
+            session.flush()
+
+            _script_usage = response.usage
+            if _script_usage:
+                from pipeline.cost_tracker import log_openai_chat
+                log_openai_chat(
+                    session, episode.id, job_id, "script_generation_short",
+                    settings.openai_model,
+                    _script_usage.prompt_tokens, _script_usage.completion_tokens,
+                )
+
+            set_episode_status(session, episode, EpisodeStatus.VOICEOVER)
+            log_job_step(
+                session, job_id, "scripting", StepStatus.SUCCESS,
+                f"Standalone short script generated for episode {episode.episode_number}.",
+            )
+            return episode, payload
+
+        except Exception as exc:
+            log_job_step_isolated(job_id, "scripting", StepStatus.FAILED, f"Short script generation failed: {exc}")
+            logger.exception("Standalone short script generation failed.")
+            raise

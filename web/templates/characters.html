@@ -3,18 +3,46 @@
 {% block nav_characters %}bg-gray-800 text-white{% endblock %}
 
 {% block content %}
-<h2 class="text-2xl font-bold mb-6">Character Roster</h2>
+<div class="flex items-center justify-between mb-6">
+    <h2 class="text-2xl font-bold">Character Roster</h2>
+    <button onclick="openCharacterModal()"
+        class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white font-semibold rounded-lg flex items-center gap-2 transition">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+        </svg>
+        Add Character
+    </button>
+</div>
 
-<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="characters-grid">
     {% for c in characters %}
-    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 {% if not c.is_alive %}opacity-60{% endif %}" id="char-card-{{ c.id }}">
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 {% if not c.is_alive %}opacity-60{% endif %}"
+        id="char-card-{{ c.id }}">
         <div class="flex items-center justify-between mb-3">
             <h3 class="text-lg font-bold text-white">{{ c.name }}</h3>
-            {% if c.is_alive %}
-            <span class="px-2 py-0.5 rounded-full text-xs bg-green-900 text-green-300">Alive</span>
-            {% else %}
-            <span class="px-2 py-0.5 rounded-full text-xs bg-red-900 text-red-300">Dead</span>
-            {% endif %}
+            <div class="flex items-center gap-2">
+                {% if c.is_alive %}
+                <span class="px-2 py-0.5 rounded-full text-xs bg-green-900 text-green-300">Alive</span>
+                {% else %}
+                <span class="px-2 py-0.5 rounded-full text-xs bg-red-900 text-red-300">Dead</span>
+                {% endif %}
+                <div class="relative group">
+                    <button class="text-gray-400 hover:text-white p-1">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+                        </svg>
+                    </button>
+                    <div
+                        class="absolute right-0 mt-1 w-32 bg-gray-800 border border-gray-700 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
+                        <button
+                            onclick='openCharacterModal({{ c.id }}, {{ {"name": c.name, "origin": c.origin, "fighting_style": c.fighting_style, "personality": c.personality, "is_alive": c.is_alive}|tojson }})'
+                            class="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white rounded-t-lg">Edit</button>
+                        <button onclick="deleteCharacter({{ c.id }}, '{{ c.name|replace("'", "\\'") }}')"
+                            class="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-gray-700 hover:text-red-300 rounded-b-lg border-t border-gray-700">Delete</button>
+                    </div>
+                </div>
+            </div>
         </div>
         <div class="space-y-1 text-sm">
             <p class="text-gray-400"><span class="text-gray-600">Origin:</span> {{ c.origin }}</p>
@@ -26,15 +54,17 @@
         <div class="mt-3 pt-3 border-t border-gray-800">
             <label class="text-xs text-gray-500 uppercase block mb-1">Assigned Voice</label>
             <div class="flex items-center gap-2">
-                <select
-                    id="voice-sel-{{ c.id }}"
+                <select id="voice-sel-{{ c.id }}"
                     class="bg-gray-800 border border-gray-700 text-gray-200 text-xs rounded-lg px-2 py-1.5 flex-1 min-w-0"
-                    data-current="{{ c.voice_id or '' }}"
-                >
+                    data-current="{{ c.voice_id or '' }}">
                     <option value="">Default voice</option>
                 </select>
-                <button onclick="previewCharVoice({{ c.id }})" class="text-blue-400 hover:text-blue-300 shrink-0" title="Preview voice">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.536 8.464a5 5 0 010 7.072M18.364 5.636a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"/></svg>
+                <button onclick="previewCharVoice({{ c.id }})" class="text-blue-400 hover:text-blue-300 shrink-0"
+                    title="Preview voice">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M15.536 8.464a5 5 0 010 7.072M18.364 5.636a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                    </svg>
                 </button>
             </div>
             <div id="voice-status-{{ c.id }}" class="text-xs mt-1 hidden"></div>
@@ -50,101 +80,258 @@
                 <p class="text-xs text-gray-500">Losses</p>
             </div>
             <div class="text-center">
-                <p class="text-2xl font-bold text-gray-400">{{ '%d'|format(((c.wins / (c.wins + c.losses)) * 100) if (c.wins + c.losses) > 0 else 0) }}%</p>
+                <p class="text-2xl font-bold text-gray-400">{{ '%d'|format(((c.wins / (c.wins + c.losses)) * 100) if
+                    (c.wins + c.losses) > 0 else 0) }}%</p>
                 <p class="text-xs text-gray-500">Win Rate</p>
             </div>
         </div>
     </div>
     {% endfor %}
 </div>
+
+<!-- Add/Edit Character Modal -->
+<div id="character-modal" class="hidden fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+    <div class="bg-gray-900 border border-gray-700 rounded-2xl p-6 max-w-lg w-full">
+        <div class="flex items-center justify-between mb-4">
+            <h3 id="modal-title" class="text-lg font-bold">Add Character</h3>
+            <button onclick="closeCharacterModal()" class="text-gray-400 hover:text-white text-xl">&times;</button>
+        </div>
+        <div class="space-y-4">
+            <input type="hidden" id="char-id">
+            <div>
+                <label class="block text-sm font-medium text-gray-400 mb-1">Name <span
+                        class="text-red-500">*</span></label>
+                <input type="text" id="char-name"
+                    class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-arena-500 outline-none">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-400 mb-1">Origin</label>
+                <input type="text" id="char-origin" placeholder="e.g. Thrace, Gaul"
+                    class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-arena-500 outline-none">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-400 mb-1">Fighting Style</label>
+                <input type="text" id="char-style" placeholder="e.g. Murmillo, Retiarius"
+                    class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-arena-500 outline-none">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-400 mb-1">Personality</label>
+                <input type="text" id="char-personality" placeholder="e.g. Arrogant but honorable"
+                    class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 focus:ring-2 focus:ring-arena-500 outline-none">
+            </div>
+            <div class="flex items-center gap-2">
+                <input type="checkbox" id="char-alive"
+                    class="w-4 h-4 text-arena-600 bg-gray-800 border-gray-700 rounded focus:ring-arena-500 focus:ring-2"
+                    checked>
+                <label class="text-sm font-medium text-gray-400">Currently Alive</label>
+            </div>
+            <div id="char-error" class="hidden text-sm text-red-400 mt-2"></div>
+        </div>
+        <div class="mt-6 flex justify-end gap-3">
+            <button onclick="closeCharacterModal()"
+                class="px-4 py-2 text-gray-400 hover:text-white transition">Cancel</button>
+            <button onclick="saveCharacter()" id="btn-save-char"
+                class="px-5 py-2 bg-arena-600 hover:bg-arena-500 text-black font-semibold rounded-lg transition flex items-center gap-2">
+                <div id="save-spinner"
+                    class="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin hidden"></div>
+                Save
+            </button>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-let voicesCache = [];
-let previewAudio = null;
-let tomInstances = {};
+    let voicesCache = [];
+    let previewAudio = null;
+    let tomInstances = {};
 
-async function loadVoices() {
-    try {
-        const res = await fetch('/api/voices');
-        const data = await res.json();
-        voicesCache = data.voices || [];
+    async function loadVoices() {
+        try {
+            const res = await fetch('/api/voices');
+            const data = await res.json();
+            voicesCache = data.voices || [];
 
-        document.querySelectorAll('[id^="voice-sel-"]').forEach(sel => {
-            const current = sel.dataset.current;
-            const charId = sel.id.replace('voice-sel-', '');
-            sel.innerHTML = '<option value="">Default voice</option>';
-            voicesCache.forEach(v => {
-                const desc = [v.gender, v.accent, v.style].filter(Boolean).join(', ');
-                const label = desc ? `${v.name} — ${desc}` : v.name;
-                const selected = v.voice_id === current ? ' selected' : '';
-                sel.innerHTML += `<option value="${v.voice_id}"${selected} data-gender="${v.gender||''}" data-accent="${v.accent||''}" data-style="${v.style||''}">${label}</option>`;
-            });
+            document.querySelectorAll('[id^="voice-sel-"]').forEach(sel => {
+                const current = sel.dataset.current;
+                const charId = sel.id.replace('voice-sel-', '');
+                sel.innerHTML = '<option value="">Default voice</option>';
+                voicesCache.forEach(v => {
+                    const desc = [v.gender, v.accent, v.style].filter(Boolean).join(', ');
+                    const label = desc ? `${v.name} — ${desc}` : v.name;
+                    const selected = v.voice_id === current ? ' selected' : '';
+                    sel.innerHTML += `<option value="${v.voice_id}"${selected} data-gender="${v.gender || ''}" data-accent="${v.accent || ''}" data-style="${v.style || ''}">${label}</option>`;
+                });
 
-            tomInstances[charId] = new TomSelect(sel, {
-                placeholder: 'Search voices...',
-                allowEmptyOption: true,
-                onChange: function() { assignVoice(charId); },
-                render: {
-                    option: function(data, escape) {
-                        const name = data.text.split(' — ')[0];
-                        const rest = data.text.split(' — ')[1] || '';
-                        return `<div><div>${escape(name)}</div>${rest ? `<div class="voice-meta">${escape(rest)}</div>` : ''}</div>`;
-                    },
-                    item: function(data, escape) {
-                        return `<div>${escape(data.text.split(' — ')[0])}</div>`;
+                tomInstances[charId] = new TomSelect(sel, {
+                    placeholder: 'Search voices...',
+                    allowEmptyOption: true,
+                    onChange: function () { assignVoice(charId); },
+                    render: {
+                        option: function (data, escape) {
+                            const name = data.text.split(' — ')[0];
+                            const rest = data.text.split(' — ')[1] || '';
+                            return `<div><div>${escape(name)}</div>${rest ? `<div class="voice-meta">${escape(rest)}</div>` : ''}</div>`;
+                        },
+                        item: function (data, escape) {
+                            return `<div>${escape(data.text.split(' — ')[0])}</div>`;
+                        }
                     }
-                }
+                });
             });
-        });
-    } catch (e) {
-        console.error('Failed to load voices:', e);
-    }
-}
-
-function previewCharVoice(charId) {
-    const vid = tomInstances[charId] ? tomInstances[charId].getValue() : '';
-    const voice = voicesCache.find(v => v.voice_id === vid);
-    if (voice && voice.preview_url) {
-        if (previewAudio) previewAudio.pause();
-        previewAudio = new Audio(voice.preview_url);
-        previewAudio.play();
-    }
-}
-
-async function assignVoice(charId) {
-    const voiceId = tomInstances[charId] ? tomInstances[charId].getValue() || null : null;
-    const status = document.getElementById(`voice-status-${charId}`);
-
-    status.classList.remove('hidden');
-    status.className = 'text-xs mt-1 text-blue-400';
-    status.textContent = 'Saving...';
-
-    try {
-        const res = await fetch(`/api/characters/${charId}/voice`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({voice_id: voiceId}),
-        });
-        const data = await res.json();
-        if (data.success) {
-            const voiceName = voiceId ? voicesCache.find(v => v.voice_id === voiceId)?.name || voiceId : 'Default';
-            status.className = 'text-xs mt-1 text-green-400';
-            status.textContent = `Voice set to: ${voiceName}`;
-            const card = document.getElementById(`char-card-${charId}`);
-            card.classList.add('border-green-800');
-            setTimeout(() => card.classList.remove('border-green-800'), 2000);
-        } else {
-            status.className = 'text-xs mt-1 text-red-400';
-            status.textContent = 'Error: ' + (data.error || 'Failed');
+        } catch (e) {
+            console.error('Failed to load voices:', e);
         }
-    } catch (e) {
-        status.className = 'text-xs mt-1 text-red-400';
-        status.textContent = 'Network error';
     }
-}
 
-loadVoices();
+    function previewCharVoice(charId) {
+        const vid = tomInstances[charId] ? tomInstances[charId].getValue() : '';
+        const voice = voicesCache.find(v => v.voice_id === vid);
+        if (voice && voice.preview_url) {
+            if (previewAudio) previewAudio.pause();
+            previewAudio = new Audio(voice.preview_url);
+            previewAudio.play();
+        }
+    }
+
+    async function assignVoice(charId) {
+        const voiceId = tomInstances[charId] ? tomInstances[charId].getValue() || null : null;
+        const status = document.getElementById(`voice-status-${charId}`);
+
+        status.classList.remove('hidden');
+        status.className = 'text-xs mt-1 text-blue-400';
+        status.textContent = 'Saving...';
+
+        try {
+            const res = await fetch(`/api/characters/${charId}/voice`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ voice_id: voiceId }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                const voiceName = voiceId ? voicesCache.find(v => v.voice_id === voiceId)?.name || voiceId : 'Default';
+                status.className = 'text-xs mt-1 text-green-400';
+                status.textContent = `Voice set to: ${voiceName}`;
+                const card = document.getElementById(`char-card-${charId}`);
+                card.classList.add('border-green-800');
+                setTimeout(() => card.classList.remove('border-green-800'), 2000);
+            } else {
+                status.className = 'text-xs mt-1 text-red-400';
+                status.textContent = 'Error: ' + (data.error || 'Failed');
+            }
+        } catch (e) {
+            status.className = 'text-xs mt-1 text-red-400';
+            status.textContent = 'Network error';
+        }
+    }
+
+    function openCharacterModal(id = null, data = null) {
+        const modal = document.getElementById('character-modal');
+        const title = document.getElementById('modal-title');
+        const error = document.getElementById('char-error');
+
+        error.classList.add('hidden');
+
+        if (id && data) {
+            title.textContent = 'Edit Character';
+            document.getElementById('char-id').value = id;
+            document.getElementById('char-name').value = data.name;
+            document.getElementById('char-origin').value = data.origin || '';
+            document.getElementById('char-style').value = data.fighting_style || '';
+            document.getElementById('char-personality').value = data.personality || '';
+            document.getElementById('char-alive').checked = data.is_alive;
+        } else {
+            title.textContent = 'Add Character';
+            document.getElementById('char-id').value = '';
+            document.getElementById('char-name').value = '';
+            document.getElementById('char-origin').value = '';
+            document.getElementById('char-style').value = '';
+            document.getElementById('char-personality').value = '';
+            document.getElementById('char-alive').checked = true;
+        }
+
+        modal.classList.remove('hidden');
+    }
+
+    function closeCharacterModal() {
+        document.getElementById('character-modal').classList.add('hidden');
+    }
+
+    async function saveCharacter() {
+        const id = document.getElementById('char-id').value;
+        const name = document.getElementById('char-name').value.trim();
+        const origin = document.getElementById('char-origin').value.trim();
+        const fighting_style = document.getElementById('char-style').value.trim();
+        const personality = document.getElementById('char-personality').value.trim();
+        const is_alive = document.getElementById('char-alive').checked;
+
+        const error = document.getElementById('char-error');
+        const btn = document.getElementById('btn-save-char');
+        const spinner = document.getElementById('save-spinner');
+
+        if (!name) {
+            error.textContent = 'Name is required.';
+            error.classList.remove('hidden');
+            return;
+        }
+
+        btn.disabled = true;
+        spinner.classList.remove('hidden');
+        error.classList.add('hidden');
+
+        const payload = {
+            name, origin, fighting_style, personality, is_alive
+        };
+
+        const url = id ? `/api/characters/${id}` : '/api/characters';
+        const method = id ? 'PUT' : 'POST';
+
+        try {
+            const res = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                window.location.reload();
+            } else {
+                error.textContent = data.error || 'Failed to save character.';
+                error.classList.remove('hidden');
+                btn.disabled = false;
+                spinner.classList.add('hidden');
+            }
+        } catch (e) {
+            error.textContent = 'Network error.';
+            error.classList.remove('hidden');
+            btn.disabled = false;
+            spinner.classList.add('hidden');
+        }
+    }
+
+    async function deleteCharacter(id, name) {
+        if (!confirm(`Are you sure you want to delete ${name}? This action cannot be undone.`)) {
+            return;
+        }
+
+        try {
+            const res = await fetch(`/api/characters/${id}`, {
+                method: 'DELETE'
+            });
+            const data = await res.json();
+            if (data.success) {
+                window.location.reload();
+            } else {
+                alert('Error deleting: ' + data.error);
+            }
+        } catch (e) {
+            alert('Network error while deleting.');
+        }
+    }
+
+    loadVoices();
 </script>
 {% endblock %}

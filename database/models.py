@@ -102,6 +102,7 @@ class Episode(Base):
     status: Mapped[EpisodeStatus] = mapped_column(
         SAEnum(EpisodeStatus, values_callable=_enum_values), nullable=False, default=EpisodeStatus.PENDING, index=True
     )
+    is_short: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     youtube_video_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     youtube_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     scheduled_upload_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
